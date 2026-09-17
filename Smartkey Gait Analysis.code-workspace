@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "name": "Firmware",
+      "path": "Filmware"
+    },
+    {
+      "name": "Mobile App",
+      "path": "Mobile-app"
+    }
+  ],
+  "settings": {}
+}

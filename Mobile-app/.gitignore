@@ -1,0 +1,10 @@
+node_modules/
+.vite/
+dist/
+.env
+.DS_Store
+*.log
+*.apk
+android/
+DummyESP32*/
+guidelines/
