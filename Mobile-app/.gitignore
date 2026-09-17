@@ -5,6 +5,12 @@ dist/
 .DS_Store
 *.log
 *.apk
-android/
+# Capacitor Android local & build files
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/
 DummyESP32*/
 guidelines/

@@ -1,13 +1,18 @@
 {
   "folders": [
     {
-      "name": "Firmware",
+      "name": "Arduino RP2040",
       "path": "Filmware"
     },
     {
       "name": "Mobile App",
       "path": "Mobile-app"
+    },
+    {
+      "name": "ESP32",
+      "path": "Firmware-ESP32"
     }
+
   ],
   "settings": {}
 }

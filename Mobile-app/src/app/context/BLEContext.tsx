@@ -2,10 +2,10 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { BleClient, dataViewToText, textToDataView } from "@capacitor-community/bluetooth-le";
 import { databaseService } from "../services/databaseService";
 
-// Placeholder UUIDs for the Smart Home Security App
-const SMART_KEY_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0";
-const DATA_CHARACTERISTIC_UUID = "12345678-1234-5678-1234-56789abcdef1"; // Notifications (Confidence, Vector, Progress, etc)
-const COMMAND_CHARACTERISTIC_UUID = "12345678-1234-5678-1234-56789abcdef2"; // Write commands (Lock, Emergency PIN)
+// UUID BLE selaras dengan firmware RP2040 (Filmware/src/nano/config.h)
+const SMART_KEY_SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
+const DATA_CHARACTERISTIC_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"; // TX Telemetri dari RP2040 (Notifications)
+const COMMAND_CHARACTERISTIC_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"; // RX Command ke RP2040 (Trigger/Write)
 
 export type BLEConnectionState = "disconnected" | "connecting" | "connected";
 
