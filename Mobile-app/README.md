@@ -1,9 +1,9 @@
 
-  # High-Fidelity Mobile App Design
+# Mobile App
 
-  This is a code bundle for High-Fidelity Mobile App Design. The original project is available at https://www.figma.com/design/Qao1kpaBCHu8MToF9CCCVD/High-Fidelity-Mobile-App-Design.
+Based on capacitorjs for smartkey project.
 
-  ## Running the code
+## Running the code
 
   Run `npm i` to install the dependencies.
 
