@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bluetooth, Info, Shield, History, X, CheckCircle2, XCircle,
-  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound,
+  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen,
 } from "lucide-react";
 import { AuthScanPanel } from "./components/AuthScanPanel";
 import { RegPanel } from "./components/RegPanel";
@@ -17,7 +17,6 @@ import { BLEProvider, useBLE } from "./context/BLEContext";
 import { databaseService } from "./services/databaseService";
 
 type SessionState = "idle" | "scanning" | "success" | "failed";
-type DialogType = "registration" | "authentication" | null;
 
 const MONO = "JetBrains Mono, monospace";
 const SANS = "Inter, sans-serif";
@@ -61,7 +60,7 @@ function AppContent() {
   const [mode, setMode] = useState<"auth" | "training" | null>(null);
   const [doorStatus, setDoorStatus] = useState<"locked" | "unlocked">("locked");
   const [logOpen, setLogOpen] = useState(false);
-  const [dialog, setDialog] = useState<DialogType>(null);
+  const [guidelineOpen, setGuidelineOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [bypassPurpose, setBypassPurpose] = useState<"unlock" | "re_register">("unlock");
   const [setPinOpen, setSetPinOpen] = useState(false);
@@ -202,11 +201,10 @@ function AppContent() {
           </button>
           <div className="flex items-center gap-1.5">
             {[
-              { icon: Info, action: () => setDialog("registration"), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Registrasi" },
-              { icon: Shield, action: () => setDialog("authentication"), color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0", label: "Panduan Autentikasi" },
+              { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem (Registrasi & Autentikasi)" },
               { icon: History, action: () => setLogOpen(true), color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", label: "Riwayat Log" },
             ].map(({ icon: Icon, action, color, bg, border, label }) => (
-              <button key={label} onClick={action} title={label} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95" style={{ background: bg, border: `1px solid ${border}` }}>
+              <button key={label} onClick={action} title={label} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer" style={{ background: bg, border: `1px solid ${border}` }}>
                 <Icon size={15} style={{ color }} />
               </button>
             ))}
@@ -429,7 +427,7 @@ function AppContent() {
 
       {/* ── OVERLAYS ─────────────────────────────────── */}
       <LogSheet open={logOpen} onClose={() => setLogOpen(false)} />
-      <GuidelineDialog open={!!dialog} type={dialog} onClose={() => setDialog(null)} />
+      <GuidelineDialog open={guidelineOpen} onClose={() => setGuidelineOpen(false)} />
       <EmergencyBypassModal
         open={emergencyOpen}
         onClose={() => setEmergencyOpen(false)}
