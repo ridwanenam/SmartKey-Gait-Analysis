@@ -12,6 +12,7 @@ interface EmergencyBypassModalProps {
   onUnlock?: () => void;
   purpose?: "unlock" | "re_register";
   onVerified?: () => void;
+  correctPin?: string;
 }
 
 const MONO = "JetBrains Mono, monospace";
@@ -33,6 +34,7 @@ export function EmergencyBypassModal({
   onUnlock,
   purpose = "unlock",
   onVerified,
+  correctPin,
 }: EmergencyBypassModalProps) {
   const { sendCommand, addLog } = useBLE();
   const [pin, setPin] = useState("");
@@ -69,7 +71,7 @@ export function EmergencyBypassModal({
 
       verifyTimer.current = setTimeout(async () => {
         try {
-          const savedPin = await databaseService.getBypassPin();
+          const savedPin = correctPin || (await databaseService.getBypassPin());
           const isValid = next === savedPin;
           setLatencyMs(Math.max(28, Date.now() - startTime));
 

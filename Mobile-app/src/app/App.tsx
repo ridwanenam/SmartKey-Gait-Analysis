@@ -10,6 +10,7 @@ import { LogSheet } from "./components/LogSheet";
 import { GuidelineDialog } from "./components/GuidelineDialog";
 import { EmergencyBypassModal } from "./components/EmergencyBypassModal";
 import { SetPinModal } from "./components/SetPinModal";
+import { PinSettingsModal } from "./components/PinSettingsModal";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -64,9 +65,18 @@ function AppContent() {
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [bypassPurpose, setBypassPurpose] = useState<"unlock" | "re_register">("unlock");
   const [setPinOpen, setSetPinOpen] = useState(false);
+  const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
+  const [currentBypassPin, setCurrentBypassPin] = useState("123456");
   const [gyroData, setGyroData] = useState(() => Array.from({ length: MAX_G }, (_, i) => gyro(i)));
   const gyroT = useRef(MAX_G);
   const gyroInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Ambil PIN Bypass dari SQLite saat awal aplikasi dibuka
+  useEffect(() => {
+    databaseService.getBypassPin().then((pin) => {
+      if (pin) setCurrentBypassPin(pin);
+    });
+  }, []);
 
   const TOTAL = 10;
   
@@ -201,7 +211,8 @@ function AppContent() {
           </button>
           <div className="flex items-center gap-1.5">
             {[
-              { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem (Registrasi & Autentikasi)" },
+              { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem" },
+              { icon: KeyRound, action: () => setPinSettingsOpen(true), color: TEAL_DIM, bg: TEAL_BG, border: TEAL_BORDER, label: "Pengaturan PIN Bypass" },
               { icon: History, action: () => setLogOpen(true), color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", label: "Riwayat Log" },
             ].map(({ icon: Icon, action, color, bg, border, label }) => (
               <button key={label} onClick={action} title={label} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer" style={{ background: bg, border: `1px solid ${border}` }}>
@@ -362,46 +373,40 @@ function AppContent() {
             </button>
           </div>
 
-          {/* Emergency Bypass & Manual Control */}
+          {/* Emergency Bypass & Manual Lock Control */}
           {!isScanning && (
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                onClick={() => {
-                  setBypassPurpose("unlock");
-                  setEmergencyOpen(true);
-                }}
-                className="w-full rounded-xl py-2.5 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                style={{ background: TEAL_BG, border: `1.5px solid ${TEAL_BORDER}` }}
-              >
-                <Zap size={14} style={{ color: TEAL_DIM }} />
-                <span style={{ color: TEAL_DIM, fontFamily: MONO, fontWeight: 700, fontSize: "0.7rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                  Bypass
-                </span>
-              </button>
-              <button
-                onClick={toggleDoor}
-                className="w-full rounded-xl py-2.5 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                style={{
-                  background: doorStatus === "unlocked" ? "#F0FDF4" : "#FEF2F2",
-                  border: `1.5px solid ${doorStatus === "unlocked" ? "#BBF7D0" : "#FECACA"}`,
-                }}
-              >
-                {doorStatus === "unlocked" ? (
-                  <>
-                    <Lock size={14} style={{ color: "#16A34A" }} />
-                    <span style={{ color: "#16A34A", fontFamily: MONO, fontWeight: 700, fontSize: "0.7rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                      Kunci Pintu
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Unlock size={14} style={{ color: "#DC2626" }} />
-                    <span style={{ color: "#DC2626", fontFamily: MONO, fontWeight: 700, fontSize: "0.7rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                      Buka Pintu
-                    </span>
-                  </>
-                )}
-              </button>
+            <div className="w-full">
+              {doorStatus === "locked" ? (
+                <button
+                  onClick={() => {
+                    setBypassPurpose("unlock");
+                    setEmergencyOpen(true);
+                  }}
+                  className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+                  style={{ background: TEAL_BG, border: `1.5px solid ${TEAL_BORDER}` }}
+                  title="Buka Pintu Menggunakan PIN Emergency Bypass"
+                >
+                  <Zap size={15} style={{ color: TEAL_DIM }} />
+                  <span style={{ color: TEAL_DIM, fontFamily: MONO, fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    Bypass (PIN Buka Pintu)
+                  </span>
+                </button>
+              ) : (
+                <button
+                  onClick={toggleDoor}
+                  className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+                  style={{
+                    background: "#FEF2F2",
+                    border: "1.5px solid #FECACA",
+                  }}
+                  title="Kunci Pintu Rumah Kembali"
+                >
+                  <Lock size={15} style={{ color: "#DC2626" }} />
+                  <span style={{ color: "#DC2626", fontFamily: MONO, fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    Kunci Pintu Sekarang
+                  </span>
+                </button>
+              )}
             </div>
           )}
 
@@ -432,14 +437,25 @@ function AppContent() {
         open={emergencyOpen}
         onClose={() => setEmergencyOpen(false)}
         purpose={bypassPurpose}
+        correctPin={currentBypassPin}
         onUnlock={() => setDoorStatus("unlocked")}
         onVerified={() => startSession("training")}
       />
       <SetPinModal
         open={setPinOpen}
         onClose={() => setSetPinOpen(false)}
-        onSuccess={() => {
-          addLog({ type: "system", status: "Success", message: "PIN Bypass Darurat Baru Aktif" });
+        onSuccess={(newPin) => {
+          setCurrentBypassPin(newPin);
+          addLog({ type: "system", status: "Success", message: `PIN Bypass Baru (${newPin}) Berhasil Disimpan ke SQLite` });
+        }}
+      />
+      <PinSettingsModal
+        open={pinSettingsOpen}
+        onClose={() => setPinSettingsOpen(false)}
+        currentPin={currentBypassPin}
+        onSuccess={(newPin) => {
+          setCurrentBypassPin(newPin);
+          addLog({ type: "system", status: "Success", message: `PIN Bypass Berhasil Diubah ke: ${newPin}` });
         }}
       />
     </div>
