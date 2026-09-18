@@ -167,14 +167,14 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
       {open && (
         <>
           <motion.div
-            className="absolute inset-0 z-30"
-            style={{ background: "rgba(30,41,59,0.35)", backdropFilter: "blur(2px)" }}
+            className="fixed inset-0 z-40"
+            style={{ background: "rgba(30,41,59,0.45)", backdropFilter: "blur(3px)" }}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={onClose}
           />
           <motion.div
-            className="absolute bottom-0 left-0 right-0 z-40 rounded-t-3xl overflow-hidden flex flex-col"
-            style={{ background: "#FFFFFF", boxShadow: "0 -8px 40px rgba(30,41,59,0.14)", maxHeight: "88%" }}
+            className="fixed bottom-0 left-0 right-0 md:bottom-6 md:left-1/2 md:-translate-x-1/2 md:max-w-3xl md:w-full z-50 rounded-t-3xl md:rounded-2xl overflow-hidden flex flex-col"
+            style={{ background: "#FFFFFF", boxShadow: "0 -8px 40px rgba(30,41,59,0.18)", maxHeight: "90dvh" }}
             initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
           >

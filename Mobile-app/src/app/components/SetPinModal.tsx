@@ -65,7 +65,7 @@ export function SetPinModal({ open, onClose, onSuccess }: SetPinModalProps) {
         <>
           {/* Backdrop */}
           <motion.div
-            className="absolute inset-0 z-50"
+            className="fixed inset-0 z-50"
             style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(4px)" }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -75,10 +75,12 @@ export function SetPinModal({ open, onClose, onSuccess }: SetPinModalProps) {
 
           {/* Modal Bottom Sheet */}
           <motion.div
-            className="absolute bottom-0 left-0 right-0 z-50 rounded-t-3xl overflow-hidden"
+            className="fixed bottom-0 left-0 right-0 md:bottom-8 md:left-1/2 md:-translate-x-1/2 md:max-w-md md:w-full z-50 rounded-t-3xl md:rounded-3xl overflow-hidden"
             style={{
               background: "#FFFFFF",
               boxShadow: "0 -12px 48px rgba(15,23,42,0.2)",
+              maxHeight: "92dvh",
+              overflowY: "auto",
             }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}

@@ -52,15 +52,15 @@ export function GuidelineDialog({ open, type, onClose }: GuidelineDialogProps) {
     <AnimatePresence>
       {open && data && (
         <motion.div
-          className="absolute inset-0 z-30 flex items-center justify-center px-5"
-          style={{ background: "rgba(30,41,59,0.4)", backdropFilter: "blur(4px)" }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(30,41,59,0.45)", backdropFilter: "blur(4px)" }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
         >
           <motion.div
-            className="w-full max-w-sm rounded-2xl overflow-hidden"
+            className="w-full max-w-sm md:max-w-md rounded-2xl overflow-hidden"
             style={{
               background: "#FFFFFF",
               boxShadow: "0 20px 60px rgba(30,41,59,0.2), 0 4px 16px rgba(30,41,59,0.08)",
