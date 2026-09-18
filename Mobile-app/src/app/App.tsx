@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bluetooth, Info, Shield, History, X, CheckCircle2, XCircle,
-  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen,
+  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen, Terminal,
 } from "lucide-react";
 import { AuthScanPanel } from "./components/AuthScanPanel";
 import { RegPanel } from "./components/RegPanel";
+import { IdlePanel } from "./components/IdlePanel";
 import { LogSheet } from "./components/LogSheet";
 import { GuidelineDialog } from "./components/GuidelineDialog";
 import { EmergencyBypassModal } from "./components/EmergencyBypassModal";
@@ -56,7 +57,7 @@ export default function App() {
 }
 
 function AppContent() {
-  const { connectionState, bleData, connect, disconnect, sendCommand, resetBleData, addLog } = useBLE();
+  const { connectionState, bleData, setBleData, connect, disconnect, sendCommand, resetBleData, addLog } = useBLE();
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [mode, setMode] = useState<"auth" | "training" | null>(null);
   const [doorStatus, setDoorStatus] = useState<"locked" | "unlocked">("locked");
@@ -67,6 +68,7 @@ function AppContent() {
   const [setPinOpen, setSetPinOpen] = useState(false);
   const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
   const [currentBypassPin, setCurrentBypassPin] = useState("123456");
+  const [isDevMode, setIsDevMode] = useState(false);
   const [gyroData, setGyroData] = useState(() => Array.from({ length: MAX_G }, (_, i) => gyro(i)));
   const gyroT = useRef(MAX_G);
   const gyroInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -90,7 +92,7 @@ function AppContent() {
       setEmergencyOpen(true);
     } else {
       setDoorStatus("locked");
-      await sendCommand("LOCK_MANUAL");
+      await sendCommand("LOCK_DOOR");
       addLog({ type: "system", status: "Info", message: "Pintu dikunci manual (LOCKED)" });
     }
   };
@@ -104,12 +106,74 @@ function AppContent() {
     return () => { if (gyroInterval.current) clearInterval(gyroInterval.current); };
   }, []);
 
+  // Simulator telemetry otomatis jika Dev Mode aktif dan belum tersambung ke hardware fisik
+  useEffect(() => {
+    let simInterval: ReturnType<typeof setInterval> | null = null;
+    if (sessionState === "scanning" && connectionState !== "connected" && isDevMode) {
+      let win = 0;
+      simInterval = setInterval(() => {
+        win++;
+        const conf = 91.0 + win * 0.8 + (Math.random() * 0.4);
+        const ll = -145.0 + win * 0.5;
+        const meanVal = 0.42 + (Math.random() - 0.5) * 0.04;
+        const varVal = 1.15 + (Math.random() - 0.5) * 0.08;
+        const stdVal = Math.sqrt(varVal);
+
+        setBleData({
+          score: `${conf.toFixed(1)}%`,
+          vector: `[${meanVal.toFixed(2)}, ${varVal.toFixed(2)}, ${stdVal.toFixed(2)}]`,
+          cov: `[-0.14, 2.84]`,
+          delta: `+0.05`,
+          progress: win,
+          authStatus: win >= 10 ? "success" : "scanning",
+          telemetry: {
+            windowIndex: win,
+            isZUPTValid: true,
+            confidenceScore: conf,
+            logLikelihood: ll,
+            mean: meanVal,
+            variance: varVal,
+            stdDev: stdVal,
+            skewness: -0.14,
+            kurtosis: 2.84,
+            adaptiveThreshold: -150.0,
+            emaDelta: 0.048,
+            freq: "100 Hz",
+            sigma: varVal.toFixed(3),
+            zupt: "Valid (Active Gait)",
+            ghmm: ll.toFixed(2),
+            th: "-150.00",
+            alpha: "0.15",
+            dw: "3.0s (N=300)",
+          }
+        });
+
+        if (win >= 10) {
+          if (simInterval) clearInterval(simInterval);
+          setSessionState("success");
+          if (mode === "auth") {
+            setDoorStatus("unlocked");
+          }
+        }
+      }, 2400);
+    }
+    return () => {
+      if (simInterval) clearInterval(simInterval);
+    };
+  }, [sessionState, connectionState, isDevMode, mode, setBleData]);
+
   const startSession = async (m: "auth" | "training") => {
     if (connectionState !== "connected") {
+      if (isDevMode) {
+        setMode(m);
+        setSessionState("scanning");
+        resetBleData();
+        return;
+      }
       alert("Hubungkan ke Smart Key terlebih dahulu!");
       return;
     }
-    const cmd = m === "auth" ? "START_AUTH" : "START_REG";
+    const cmd = m === "auth" ? "START_AUTH" : "TRAIN:0";
     const success = await sendCommand(cmd);
     if (success) {
       setMode(m);
@@ -121,6 +185,12 @@ function AppContent() {
   // Mulai registrasi dengan proteksi PIN jika sudah pernah terdaftar
   const handleStartRegistration = async () => {
     if (connectionState !== "connected") {
+      if (isDevMode) {
+        setMode("training");
+        setSessionState("scanning");
+        resetBleData();
+        return;
+      }
       alert("Hubungkan ke Smart Key terlebih dahulu!");
       return;
     }
@@ -160,10 +230,11 @@ function AppContent() {
         return () => clearTimeout(t);
       } 
       // 2. Skenario Autentikasi Selesai (Bener -> UNLOCKED, Salah -> LOCKED)
-      else if (mode === "auth" && (bleData.authStatus === "success" || bleData.authStatus === "failed")) {
+      else if (mode === "auth" && (progress >= TOTAL || bleData.authStatus === "success" || bleData.authStatus === "failed")) {
+        const finalStatus = (bleData.authStatus === "success" || (progress >= TOTAL && bleData.telemetry.confidenceScore >= 80.0)) ? "success" : "failed";
         const t = setTimeout(() => {
-          setSessionState(bleData.authStatus as SessionState);
-          if (bleData.authStatus === "success") {
+          setSessionState(finalStatus);
+          if (finalStatus === "success") {
             setDoorStatus("unlocked");
           } else {
             setDoorStatus("locked");
@@ -172,7 +243,7 @@ function AppContent() {
         return () => clearTimeout(t);
       }
     }
-  }, [bleData.authStatus, sessionState, mode, progress, TOTAL, addLog]);
+  }, [bleData.authStatus, bleData.telemetry.confidenceScore, sessionState, mode, progress, TOTAL, addLog]);
 
   const isScanning = sessionState === "scanning";
   const isResult = sessionState === "success" || sessionState === "failed";
@@ -219,6 +290,19 @@ function AppContent() {
                 <Icon size={15} style={{ color }} />
               </button>
             ))}
+            {/* Developer Mode Toggle Button */}
+            <button
+              onClick={() => setIsDevMode(prev => !prev)}
+              title={isDevMode ? "Mode Pengembang Aktif (Ketuk untuk Mematikan)" : "Aktifkan Mode Pengembang / Diagnostik"}
+              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+              style={{
+                background: isDevMode ? "#FEF3C7" : "#F1F5F9",
+                border: `1px solid ${isDevMode ? "#FCD34D" : "#E2E8F0"}`,
+                boxShadow: isDevMode ? "0 0 8px rgba(245,158,11,0.25)" : "none",
+              }}
+            >
+              <Terminal size={15} style={{ color: isDevMode ? "#D97706" : "#64748B" }} />
+            </button>
           </div>
         </div>
       </header>
@@ -311,19 +395,29 @@ function AppContent() {
           {/* Kolom Kanan: Panel Status Pemindaian & Diagnostik */}
           <div className="flex flex-col gap-4">
             {!isResult && (
-              mode === "training"
-                ? <RegPanel isScanning={isScanning} progress={progress} total={TOTAL} />
-                : <AuthScanPanel isScanning={isScanning} progress={progress} total={TOTAL} diagScore={bleData.score} diagVector={bleData.vector} diagCov={bleData.cov} diagDelta={bleData.delta} />
-            )}
-
-            {!isResult && !isScanning && mode === null && (
-              <div className="rounded-2xl p-6 flex flex-col items-center justify-center text-center bg-white border border-[#E2E8F0] shadow-sm min-h-[220px]">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3 bg-[#F1F5F9] border border-[#E2E8F0]">
-                  <Shield size={26} style={{ color: "#94A3B8" }} />
-                </div>
-                <p style={{ color: "#1E293B", fontFamily: SANS, fontSize: "0.85rem", fontWeight: 600 }}>Pilih operasi di bawah untuk memulai</p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.65rem", marginTop: 4 }}>AUTENTIKASI ATAU REGISTRASI</p>
-              </div>
+              mode === "training" ? (
+                <RegPanel
+                  isScanning={isScanning}
+                  progress={progress}
+                  total={TOTAL}
+                  telemetry={bleData.telemetry}
+                  isDevMode={isDevMode}
+                />
+              ) : mode === "auth" ? (
+                <AuthScanPanel
+                  isScanning={isScanning}
+                  progress={progress}
+                  total={TOTAL}
+                  diagScore={bleData.score}
+                  diagVector={bleData.vector}
+                  diagCov={bleData.cov}
+                  diagDelta={bleData.delta}
+                  telemetry={bleData.telemetry}
+                  isDevMode={isDevMode}
+                />
+              ) : (
+                <IdlePanel isConnected={connectionState === "connected"} isDevMode={isDevMode} />
+              )
             )}
           </div>
         </div>
