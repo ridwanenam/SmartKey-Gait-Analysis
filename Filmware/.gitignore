@@ -12,3 +12,6 @@ compile_commands.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Temporary reference docs
+context_temp.pdf

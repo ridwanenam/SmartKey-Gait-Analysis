@@ -21,6 +21,7 @@ float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 // Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms)
 unsigned long previousSampleTime = 0;
 unsigned long calibrationStartTime = 0;
+unsigned long lastCalibNotifyTime = 0;
 
 // Variabel Akumulator Online Calibration (5 Detik)
 float sumAccX = 0.0f, sumAccY = 0.0f, sumAccZ = 0.0f;
@@ -116,15 +117,28 @@ void handleIncomingCommands() {
         Serial.print(F("[BLE CMD] Diterima: "));
         Serial.println(cmd);
 
-        // Perintah Mulai Registrasi: "TRAIN:<slot>" (Contoh: "TRAIN:0")
-        if (strncmp(cmd, "TRAIN:", 6) == 0) {
-            currentSlotTarget = atoi(&cmd[6]);
+        // Perintah Mulai Registrasi: "TRAIN:<slot>" atau "START_REG"
+        if (strncmp(cmd, "TRAIN:", 6) == 0 || strcmp(cmd, "START_REG") == 0) {
+            currentSlotTarget = (strncmp(cmd, "TRAIN:", 6) == 0) ? atoi(&cmd[6]) : 0;
             if (currentSlotTarget < MAX_USERS) {
                 sumAccX = sumAccY = sumAccZ = 0.0f;
                 calibSampleCount = 0;
                 calibrationStartTime = millis();
+                lastCalibNotifyTime = millis();
                 currentState = STATE_CALIBRATING;
-                Serial.println(F("[STATE] Memulai Online Calibration 5 Detik..."));
+                validWindowCounter = 0;
+                featureExtractor.resetBuffer();
+
+                // Segera kirim sinyal ke Mobile App: Status 2 = Memulai Kalibrasi Saku
+                TelemetryData telem;
+                memset(&telem, 0, sizeof(TelemetryData));
+                telem.windowIndex = 0;
+                telem.isZUPTValid = 2; // 2 = Calibrating Pocket
+                telem.confidenceScore = 0.0f;
+                ble.sendTelemetry(telem);
+
+                Serial.print(F("[STATE] Memulai Online Calibration 5 Detik untuk Slot "));
+                Serial.println(currentSlotTarget);
             }
         }
         // Perintah Mulai Autentikasi Langkah Kaki
@@ -133,12 +147,21 @@ void handleIncomingCommands() {
             ghmm.resetInference();
             validWindowCounter = 0;
             currentState = STATE_AUTHENTICATING;
+
+            // Kirim notifikasi awal siap melangkah
+            TelemetryData telem;
+            memset(&telem, 0, sizeof(TelemetryData));
+            telem.windowIndex = 0;
+            telem.isZUPTValid = 1;
+            ble.sendTelemetry(telem);
+
             Serial.println(F("[STATE] Memulai Sesi Autentikasi Berjalan..."));
         }
         // Perintah Batalkan Sesi Aktif
         else if (strcmp(cmd, "CANCEL") == 0) {
             currentState = STATE_IDLE;
             featureExtractor.resetBuffer();
+            validWindowCounter = 0;
             Serial.println(F("[STATE] Sesi Dibatalkan -> Kembali ke Idle"));
         }
         // Perintah Hapus Satu User Tertentu: "DEL:<slot>" (Contoh: "DEL:1")
@@ -159,6 +182,11 @@ void handleIncomingCommands() {
             ble.sendDoorCommand("OPEN_DOOR");
             Serial.println(F("[FAIL-SAFE] Emergency Bypass Aktif: Membuka Pintu!"));
         }
+        // Manual Door Lock: Kunci Pintu Manual dari Mobile App
+        else if (strcmp(cmd, "LOCK_DOOR") == 0 || strcmp(cmd, "LOCK_MANUAL") == 0) {
+            ble.sendDoorCommand("CLOSE_DOOR");
+            Serial.println(F("[CONTROL] Perintah Kunci Manual -> Pintu Dikunci!"));
+        }
     }
 }
 
@@ -168,7 +196,21 @@ void processIdleState() {
 
 // Fase 5 Detik Pertama: Mengunci Sudut Kemiringan Saku Pengguna
 void processCalibrationState() {
-    if (millis() - calibrationStartTime >= CALIBRATION_DURATION_MS) {
+    unsigned long now = millis();
+    unsigned long elapsed = now - calibrationStartTime;
+
+    // Kirim denyut berkala per 1 detik agar Mobile App menampilkan hitung mundur
+    if (now - lastCalibNotifyTime >= 1000) {
+        lastCalibNotifyTime = now;
+        TelemetryData telem;
+        memset(&telem, 0, sizeof(TelemetryData));
+        telem.windowIndex = 0;
+        telem.isZUPTValid = 2; // Status Kalibrasi
+        telem.confidenceScore = (float)elapsed / 1000.0f; // 1.0 s.d. 5.0 detik
+        ble.sendTelemetry(telem);
+    }
+
+    if (elapsed >= CALIBRATION_DURATION_MS) {
         if (calibSampleCount > 0) {
             float meanAx = sumAccX / (float)calibSampleCount;
             float meanAy = sumAccY / (float)calibSampleCount;
@@ -184,6 +226,15 @@ void processCalibrationState() {
         featureExtractor.resetBuffer();
         validWindowCounter = 0;
         currentState = STATE_TRAINING;
+
+        // Beritahu Mobile App bahwa kalibrasi selesai (isZUPTValid = 3) dan siap melangkah
+        TelemetryData telem;
+        memset(&telem, 0, sizeof(TelemetryData));
+        telem.windowIndex = 0;
+        telem.isZUPTValid = 3; // 3 = Selesai Kalibrasi, Mulai Melangkah
+        telem.confidenceScore = 5.0f;
+        ble.sendTelemetry(telem);
+
         Serial.println(F("[STATE] Kalibrasi Selesai -> Silakan Berjalan Normal"));
     }
 }
@@ -227,9 +278,13 @@ void processTrainingState(float gx, float gy, float gz) {
                 StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
 
                 Serial.println(F("[SUCCESS] Model GHMM Selesai & Tersimpan di Flash!"));
+                ble.sendDoorCommand("TRAIN_SUCCESS");
                 currentState = STATE_IDLE;
             }
         } else {
+            // Jika diam/noise, pertahankan progres hitungan langkah yang sudah valid
+            telem.windowIndex = validWindowCounter;
+            telem.confidenceScore = (float)validWindowCounter * 10.0f;
             Serial.println(F("[ZUPT] Gerak Tidak Valid/Diam. Jendela Dibuang."));
         }
 
@@ -290,8 +345,21 @@ void processAuthenticationState(float gx, float gy, float gz) {
                     currentState = STATE_IDLE;
                     validWindowCounter = 0;
                 }
+            } else {
+                // Kasus cadangan jika pengguna belum didaftarkan di memori Flash
+                Serial.println(F("[AUTH] Profil Pengguna Belum Terdaftar di Flash!"));
+                telem.confidenceScore = 0.0f;
+                telem.logLikelihood = -999.0f;
+
+                if (validWindowCounter >= TARGET_WINDOWS) {
+                    ble.sendDoorCommand("ACCESS_DENIED");
+                    currentState = STATE_IDLE;
+                    validWindowCounter = 0;
+                }
             }
         } else {
+            // Gerak tidak valid / diam, pertahankan indeks akumulasi
+            telem.windowIndex = validWindowCounter;
             Serial.println(F("[ZUPT] Diam Terdeteksi -> Mengabaikan Jendela"));
         }
 
