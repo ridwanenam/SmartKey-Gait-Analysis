@@ -77,10 +77,6 @@ export function RadarDisplay({ isScanning, progress, total }: RadarDisplayProps)
       angle += 0.025;
       angleRef.current = angle;
 
-      const sweepGrad = ctx!.createConicalGradient
-        ? null
-        : null;
-
       // Manual sweep arc
       const sweepLen = Math.PI * 0.8;
       for (let i = 0; i < 60; i++) {

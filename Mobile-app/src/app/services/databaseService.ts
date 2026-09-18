@@ -10,6 +10,7 @@ export interface AuthLogRecord {
   status: 'SUCCESS' | 'FAILED' | 'BYPASS';
   incremental?: string;
   message?: string;
+  details?: string;
 }
 
 export interface RegLogRecord {
@@ -19,12 +20,13 @@ export interface RegLogRecord {
   totalJendela: number;
   statusAkhir: 'SUCCESS' | 'FAILED' | 'IN_PROGRESS';
   message?: string;
+  details?: string;
 }
 
 export interface SystemLogRecord {
   id: string;
   timestamp: string;
-  status: 'Info' | 'Warning' | 'Error' | 'Success';
+  status: 'Info' | 'Warning' | 'Error' | 'Success' | 'Failed';
   message: string;
 }
 
@@ -98,7 +100,8 @@ class DatabaseService {
         score TEXT NOT NULL,
         status TEXT NOT NULL,
         incremental TEXT,
-        message TEXT
+        message TEXT,
+        details TEXT
       );
 
       -- Tabel 2: Log Registrasi
@@ -108,7 +111,8 @@ class DatabaseService {
         slot_user TEXT NOT NULL,
         total_jendela INTEGER NOT NULL,
         status_akhir TEXT NOT NULL,
-        message TEXT
+        message TEXT,
+        details TEXT
       );
 
       -- Tabel 3: Log Sistem
@@ -142,6 +146,14 @@ class DatabaseService {
     `;
 
     await this.db.execute(schema);
+
+    // Migrasi kolom details jika tabel sudah ada sebelumnya
+    try {
+      await this.db.execute(`ALTER TABLE log_autentikasi ADD COLUMN details TEXT;`);
+    } catch (_) {}
+    try {
+      await this.db.execute(`ALTER TABLE log_registrasi ADD COLUMN details TEXT;`);
+    } catch (_) {}
   }
 
   private initWebFallback(): void {
@@ -172,8 +184,8 @@ class DatabaseService {
 
     if (Capacitor.isNativePlatform() && this.db) {
       const sql = `
-        INSERT INTO log_autentikasi (id, timestamp, user_id, score, status, incremental, message)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO log_autentikasi (id, timestamp, user_id, score, status, incremental, message, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
       `;
       await this.db.run(sql, [
         newLog.id,
@@ -183,6 +195,7 @@ class DatabaseService {
         newLog.status,
         newLog.incremental || 'Normal',
         newLog.message || '',
+        newLog.details || '',
       ]);
     } else {
       const logs: AuthLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_autentikasi') || '[]');
@@ -206,6 +219,7 @@ class DatabaseService {
           status: r.status,
           incremental: r.incremental,
           message: r.message,
+          details: r.details || undefined,
         }));
       }
       return [];
@@ -225,8 +239,8 @@ class DatabaseService {
 
     if (Capacitor.isNativePlatform() && this.db) {
       const sql = `
-        INSERT INTO log_registrasi (id, timestamp, slot_user, total_jendela, status_akhir, message)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO log_registrasi (id, timestamp, slot_user, total_jendela, status_akhir, message, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
       `;
       await this.db.run(sql, [
         newLog.id,
@@ -235,6 +249,7 @@ class DatabaseService {
         newLog.totalJendela,
         newLog.statusAkhir,
         newLog.message || '',
+        newLog.details || '',
       ]);
     } else {
       const logs: RegLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_registrasi') || '[]');
@@ -257,6 +272,7 @@ class DatabaseService {
           totalJendela: r.total_jendela,
           statusAkhir: r.status_akhir,
           message: r.message,
+          details: r.details || undefined,
         }));
       }
       return [];
@@ -440,6 +456,30 @@ class DatabaseService {
   // ==========================================
   // PENGHAPUSAN / RESET LOG
   // ==========================================
+  public async deleteLogsByIds(type: 'autentikasi' | 'registrasi' | 'sistem', ids: string[]): Promise<void> {
+    if (!ids || ids.length === 0) return;
+    await this.initialize();
+
+    const tableMap: Record<'autentikasi' | 'registrasi' | 'sistem', string> = {
+      autentikasi: 'log_autentikasi',
+      registrasi: 'log_registrasi',
+      sistem: 'log_sistem',
+    };
+    const tableName = tableMap[type];
+
+    if (Capacitor.isNativePlatform() && this.db) {
+      const placeholders = ids.map(() => '?').join(',');
+      const sql = `DELETE FROM ${tableName} WHERE id IN (${placeholders});`;
+      await this.db.run(sql, ids);
+    } else {
+      const storageKey = `sqlite_${tableName}`;
+      const logs = JSON.parse(localStorage.getItem(storageKey) || '[]');
+      const idSet = new Set(ids);
+      const filtered = logs.filter((item: any) => !idSet.has(item.id));
+      localStorage.setItem(storageKey, JSON.stringify(filtered));
+    }
+  }
+
   public async clearLogs(type?: 'autentikasi' | 'registrasi' | 'sistem' | 'debug' | 'all'): Promise<void> {
     await this.initialize();
 
