@@ -80,30 +80,50 @@ public:
             }
         }
 
-        // 3. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state dari 10 jendela
-        uint8_t windowsPerState = TARGET_WINDOWS / NUM_STATES; // 2 jendela per state
-        for (uint8_t s = 0; s < NUM_STATES; ++s) {
-            uint8_t startWin = s * windowsPerState;
-            uint8_t endWin = startWin + windowsPerState;
+        // 3. Menghitung variansi dasar global dari seluruh jendela training untuk stabilitas emisi
+        float globalVar[NUM_FEATURES];
+        for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+            float globalMean = 0.0f;
+            for (uint8_t w = 0; w < TARGET_WINDOWS; ++w) {
+                globalMean += windowFeatures[w][d];
+            }
+            globalMean /= (float)TARGET_WINDOWS;
+            float sumVar = 0.0f;
+            for (uint8_t w = 0; w < TARGET_WINDOWS; ++w) {
+                float diff = windowFeatures[w][d] - globalMean;
+                sumVar += (diff * diff);
+            }
+            float v = sumVar / (float)(TARGET_WINDOWS > 1 ? (TARGET_WINDOWS - 1) : 1);
+            globalVar[d] = (v < 0.05f) ? 0.05f : v; // Variansi minimal 0.05 untuk elastisitas biometrik
+        }
 
-            // Hitung nilai Mean
+        // 4. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state
+        uint8_t windowsPerState = TARGET_WINDOWS / NUM_STATES;
+        if (windowsPerState < 1) windowsPerState = 1;
+
+        for (uint8_t s = 0; s < NUM_STATES; ++s) {
+            uint8_t startWin = (s * TARGET_WINDOWS) / NUM_STATES;
+            uint8_t endWin = ((s + 1) * TARGET_WINDOWS) / NUM_STATES;
+            if (endWin <= startWin) endWin = startWin + 1;
+            if (endWin > TARGET_WINDOWS) endWin = TARGET_WINDOWS;
+
             for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
                 float sum = 0.0f;
+                uint8_t cnt = 0;
                 for (uint8_t w = startWin; w < endWin; ++w) {
                     sum += windowFeatures[w][d];
+                    cnt++;
                 }
-                model.means[s][d] = sum / (float)windowsPerState;
-            }
+                model.means[s][d] = (cnt > 0) ? (sum / (float)cnt) : windowFeatures[startWin][d];
 
-            // Hitung nilai Covariance (Variansi)
-            for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-                float sumVar = 0.0f;
+                // Hitung variansi segmen jika ada lebih dari 1 sampel, atau gunakan variansi global
+                float segSumVar = 0.0f;
                 for (uint8_t w = startWin; w < endWin; ++w) {
                     float diff = windowFeatures[w][d] - model.means[s][d];
-                    sumVar += (diff * diff);
+                    segSumVar += (diff * diff);
                 }
-                float calculatedVar = sumVar / (float)windowsPerState;
-                model.covars[s][d] = (calculatedVar < 0.01f) ? 0.01f : calculatedVar; // Mencegah singularitas
+                float calculatedVar = (cnt > 1) ? (segSumVar / (float)(cnt - 1)) : globalVar[d];
+                model.covars[s][d] = (calculatedVar < 0.05f) ? globalVar[d] : calculatedVar;
             }
         }
     }

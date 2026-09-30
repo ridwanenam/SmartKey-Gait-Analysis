@@ -25,7 +25,17 @@ public:
         char key[16];
         getUserKey(slotIndex, key, sizeof(key));
 
+        // Hapus key lama terlebih dahulu untuk mencegah kegagalan fragmentasi TDBStore
+        kv_remove(key);
+
         int res = kv_set(key, &model, sizeof(UserModel), 0);
+        Serial.print(F("[STORAGE] Simpan User Slot "));
+        Serial.print(slotIndex);
+        Serial.print(F(" ("));
+        Serial.print(model.userName);
+        Serial.print(F(") -> KVStore res: "));
+        Serial.println(res);
+
         return (res == 0); // 0 menandakan operasi sukses pada Mbed KVStore
     }
 
@@ -40,6 +50,11 @@ public:
         int res = kv_get(key, &model, sizeof(UserModel), &actualSize);
 
         if (res == 0 && actualSize == sizeof(UserModel)) {
+            Serial.print(F("[STORAGE] Muat User Slot "));
+            Serial.print(slotIndex);
+            Serial.print(F(" ("));
+            Serial.print(model.userName);
+            Serial.println(F(") -> OK"));
             return model.isRegistered;
         }
 
@@ -55,6 +70,10 @@ public:
         getUserKey(slotIndex, key, sizeof(key));
 
         int res = kv_remove(key);
+        Serial.print(F("[STORAGE] deleteUser Slot "));
+        Serial.print(slotIndex);
+        Serial.print(F(" -> kv_remove res: "));
+        Serial.println(res);
         // Res 0 = sukses terhapus, res < 0 = item memang tidak ada atau gagal
         return (res == 0 || res == MBED_ERROR_ITEM_NOT_FOUND);
     }

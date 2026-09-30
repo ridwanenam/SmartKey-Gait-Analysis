@@ -13,5 +13,6 @@ compile_commands.json
 .DS_Store
 Thumbs.db
 
-# Temporary reference docs
-context_temp.pdf
+# Context
+context_overall/
+debug_screenshoot/

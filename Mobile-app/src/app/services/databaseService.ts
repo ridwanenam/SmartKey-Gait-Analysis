@@ -30,6 +30,16 @@ export interface SystemLogRecord {
   message: string;
 }
 
+export function formatLogTimestamp(date: Date = new Date()): string {
+  const d = String(date.getDate()).padStart(2, '0');
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const y = date.getFullYear();
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${d}/${m}/${y} ${hh}:${mm}:${ss}`;
+}
+
 export interface DebugMLLogRecord {
   id: string;
   timestamp: string;
@@ -41,6 +51,12 @@ export interface DebugMLLogRecord {
   alpha: string;
   dw: string;
   freq: string;
+}
+
+export interface UserProfile {
+  slot: number;
+  name: string;
+  registeredAt: string;
 }
 
 const DB_NAME = 'smart_gait_lock_db';
@@ -143,6 +159,13 @@ class DatabaseService {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      -- Tabel 6: Profil Slot Pengguna (Hingga 4 Pengguna)
+      CREATE TABLE IF NOT EXISTS user_profiles (
+        slot INTEGER PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        registered_at TEXT NOT NULL
+      );
     `;
 
     await this.db.execute(schema);
@@ -171,6 +194,9 @@ class DatabaseService {
     }
     if (!localStorage.getItem('sqlite_user_security')) {
       localStorage.setItem('sqlite_user_security', JSON.stringify({ bypass_pin: '123456' }));
+    }
+    if (!localStorage.getItem('sqlite_user_profiles')) {
+      localStorage.setItem('sqlite_user_profiles', JSON.stringify([]));
     }
   }
 
@@ -204,6 +230,23 @@ class DatabaseService {
     }
 
     return newLog;
+  }
+
+  public async updateLatestAuthLogUser(userId: string, message: string): Promise<void> {
+    await this.initialize();
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(
+        `UPDATE log_autentikasi SET user_id = ?, message = ? WHERE rowid = (SELECT rowid FROM log_autentikasi ORDER BY rowid DESC LIMIT 1);`,
+        [userId, message]
+      );
+    } else {
+      const logs: AuthLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_autentikasi') || '[]');
+      if (logs.length > 0) {
+        logs[0].userId = userId;
+        logs[0].message = message;
+        localStorage.setItem('sqlite_log_autentikasi', JSON.stringify(logs));
+      }
+    }
   }
 
   public async getAuthLogs(limit = 100): Promise<AuthLogRecord[]> {
@@ -403,19 +446,11 @@ class DatabaseService {
       localStorage.setItem('sqlite_user_security', JSON.stringify(sec));
     }
 
-    // Catat log ke tabel log_sistem dan log_registrasi
+    // Catat log ke tabel log_sistem saja (tanpa menimpa / memalsukan log registrasi)
     await this.addSystemLog({
       timestamp,
       status: 'Success',
-      message: `PIN Emergency Bypass baru berhasil dibuat & disimpan ke SQLite`,
-    });
-
-    await this.addRegLog({
-      timestamp,
-      slotUser: 'Slot 1 (Admin A7)',
-      totalJendela: 10,
-      statusAkhir: 'SUCCESS',
-      message: `Pendaftaran User Selesai & Setup PIN Bypass Berhasil`,
+      message: `PIN Emergency Bypass baru berhasil disimpan ke SQLite`,
     });
   }
 
@@ -434,19 +469,95 @@ class DatabaseService {
     }
   }
 
+  // ==========================================
+  // 6. PROFIL SLOT PENGGUNA (HINGGA 4 USER)
+  // ==========================================
+  public async getUserProfiles(): Promise<UserProfile[]> {
+    await this.initialize();
+    if (Capacitor.isNativePlatform() && this.db) {
+      const res = await this.db.query(`SELECT slot, name, registered_at as registeredAt FROM user_profiles ORDER BY slot ASC;`);
+      return res?.values || [];
+    } else {
+      const profiles: UserProfile[] = JSON.parse(localStorage.getItem('sqlite_user_profiles') || '[]');
+      return profiles.sort((a, b) => a.slot - b.slot);
+    }
+  }
+
+  public async saveUserProfile(slot: number, name: string): Promise<void> {
+    await this.initialize();
+    const registeredAt = formatLogTimestamp();
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(
+        `INSERT OR REPLACE INTO user_profiles (slot, name, registered_at) VALUES (?, ?, ?);`,
+        [slot, name, registeredAt]
+      );
+    } else {
+      const profiles: UserProfile[] = JSON.parse(localStorage.getItem('sqlite_user_profiles') || '[]');
+      const filtered = profiles.filter((p: UserProfile) => p.slot !== slot);
+      filtered.push({ slot, name, registeredAt });
+      localStorage.setItem('sqlite_user_profiles', JSON.stringify(filtered));
+    }
+  }
+
+  public async deleteUserProfile(slot: number): Promise<void> {
+    await this.initialize();
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(`DELETE FROM user_profiles WHERE slot = ?;`, [slot]);
+    } else {
+      const profiles: UserProfile[] = JSON.parse(localStorage.getItem('sqlite_user_profiles') || '[]');
+      const filtered = profiles.filter((p: UserProfile) => p.slot !== slot);
+      localStorage.setItem('sqlite_user_profiles', JSON.stringify(filtered));
+    }
+  }
+
+  public async clearUserProfiles(): Promise<void> {
+    await this.initialize();
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.execute(`DELETE FROM user_profiles;`);
+    } else {
+      localStorage.setItem('sqlite_user_profiles', JSON.stringify([]));
+    }
+  }
+
+  public async ensureRegLogForSlot(slot: number, name: string): Promise<void> {
+    await this.initialize();
+    const slotLabel = `Slot ${slot + 1} (${name})`;
+    const regLogs = await this.getRegLogs(50);
+    const existing = regLogs.find((r) => r.slotUser.includes(`Slot ${slot + 1}`));
+
+    if (!existing) {
+      await this.addRegLog({
+        timestamp: formatLogTimestamp(),
+        slotUser: slotLabel,
+        totalJendela: 5,
+        statusAkhir: 'SUCCESS',
+        message: `Profil Aktif & Terverifikasi di Flash Memori RP2040`,
+        details: '',
+      });
+    }
+  }
+
+  public async removeRegLogsForSlot(slot: number): Promise<void> {
+    await this.initialize();
+    const pattern = `Slot ${slot + 1}`;
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(`DELETE FROM log_registrasi WHERE slot_user LIKE ?;`, [`%${pattern}%`]);
+    } else {
+      const logs: RegLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_registrasi') || '[]');
+      const filtered = logs.filter((l: RegLogRecord) => !l.slotUser.includes(pattern));
+      localStorage.setItem('sqlite_log_registrasi', JSON.stringify(filtered));
+    }
+  }
+
   public async isUserRegistered(): Promise<boolean> {
     await this.initialize();
     try {
-      if (Capacitor.isNativePlatform() && this.db) {
-        const res = await this.db.query(`SELECT value FROM user_security WHERE key = 'bypass_pin';`);
-        const regRes = await this.db.query(`SELECT id FROM log_registrasi WHERE status_akhir = 'SUCCESS';`);
-        return Boolean((res?.values && res.values.length > 0) || (regRes?.values && regRes.values.length > 0));
-      } else {
-        const sec = JSON.parse(localStorage.getItem('sqlite_user_security') || '{}');
-        const regLogs = JSON.parse(localStorage.getItem('sqlite_log_registrasi') || '[]');
-        const hasSuccessReg = Array.isArray(regLogs) && regLogs.some((l: any) => l.statusAkhir === 'SUCCESS' || l.status_akhir === 'SUCCESS');
-        return Boolean((sec['bypass_pin'] && sec['updated_at']) || hasSuccessReg);
-      }
+      const profiles = await this.getUserProfiles();
+      if (profiles.length > 0) return true;
+
+      // Fallback: periksa apakah ada log registrasi dengan status SUCCESS
+      const regLogs = await this.getRegLogs(10);
+      return regLogs.some((l) => l.statusAkhir === 'SUCCESS');
     } catch (e) {
       console.error('Gagal mengecek status registrasi user:', e);
       return false;

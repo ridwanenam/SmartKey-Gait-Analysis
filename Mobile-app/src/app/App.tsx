@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bluetooth, Info, Shield, History, X, CheckCircle2, XCircle,
-  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen, Terminal,
+  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen, Terminal, GitCompare,
 } from "lucide-react";
 import { AuthScanPanel } from "./components/AuthScanPanel";
 import { RegPanel } from "./components/RegPanel";
@@ -10,8 +10,10 @@ import { IdlePanel } from "./components/IdlePanel";
 import { LogSheet } from "./components/LogSheet";
 import { GuidelineDialog } from "./components/GuidelineDialog";
 import { EmergencyBypassModal } from "./components/EmergencyBypassModal";
+import { RegisterUserModal } from "./components/RegisterUserModal";
 import { SetPinModal } from "./components/SetPinModal";
 import { PinSettingsModal } from "./components/PinSettingsModal";
+import { GaitComparisonModal } from "./components/GaitComparisonModal";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -26,27 +28,6 @@ const TEAL = "#00F0A0";
 const TEAL_DIM = "#0D9488";
 const TEAL_BG = "#F0FFFB";
 const TEAL_BORDER = "#A7F3D0";
-const GYRO_X = "#00C896";
-const GYRO_Y = "#2563EB";
-const GYRO_Z = "#F59E0B";
-
-const SCAN_FRAMES = [
-  { score: "94.5%", vector: "[0.12, -0.05, 0.88]", cov: "[0.04, 0.01]", delta: "+0.05" },
-  { score: "91.2%", vector: "[0.14, -0.03, 0.86]", cov: "[0.03, 0.02]", delta: "+0.03" },
-  { score: "96.8%", vector: "[0.11, -0.06, 0.90]", cov: "[0.05, 0.01]", delta: "+0.07" },
-  { score: "88.4%", vector: "[0.16, -0.02, 0.84]", cov: "[0.06, 0.02]", delta: "+0.02" },
-];
-
-const MAX_G = 24;
-function gyro(t: number) {
-  const n = () => (Math.random() - 0.5) * 0.12;
-  return {
-    t,
-    x: parseFloat((Math.sin(t * 0.28) * 1.4 + Math.sin(t * 0.7) * 0.3 + n()).toFixed(3)),
-    y: parseFloat((Math.cos(t * 0.45) * 0.9 + Math.sin(t * 0.2) * 0.4 + n()).toFixed(3)),
-    z: parseFloat((Math.sin(t * 0.1) * 0.25 + Math.cos(t * 0.6) * 0.15 + n()).toFixed(3)),
-  };
-}
 
 export default function App() {
   return (
@@ -57,36 +38,57 @@ export default function App() {
 }
 
 function AppContent() {
-  const { connectionState, bleData, setBleData, connect, disconnect, sendCommand, resetBleData, addLog } = useBLE();
+  const {
+    connectionState,
+    bleData,
+    liveSample,
+    setBleData,
+    connect,
+    disconnect,
+    sendCommand,
+    resetBleData,
+    addLog,
+    setActiveSession,
+    recordStepTelemetry,
+    verifiedUserName,
+    flashSyncVersion,
+  } = useBLE();
   const [sessionState, setSessionState] = useState<SessionState>("idle");
+  const [hasRegisteredUser, setHasRegisteredUser] = useState(false);
   const [mode, setMode] = useState<"auth" | "training" | null>(null);
   const [doorStatus, setDoorStatus] = useState<"locked" | "unlocked">("locked");
   const [logOpen, setLogOpen] = useState(false);
   const [guidelineOpen, setGuidelineOpen] = useState(false);
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [bypassPurpose, setBypassPurpose] = useState<"unlock" | "re_register">("unlock");
+  const [registerModalOpen, setRegisterModalOpen] = useState(false);
   const [setPinOpen, setSetPinOpen] = useState(false);
   const [pinSettingsOpen, setPinSettingsOpen] = useState(false);
   const [currentBypassPin, setCurrentBypassPin] = useState("123456");
   const [isDevMode, setIsDevMode] = useState(false);
-  const [gyroData, setGyroData] = useState(() => Array.from({ length: MAX_G }, (_, i) => gyro(i)));
-  const gyroT = useRef(MAX_G);
-  const gyroInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
 
-  // Ambil PIN Bypass dari SQLite saat awal aplikasi dibuka
+  // Ambil PIN Bypass dan periksa ketersediaan user terdaftar dari SQLite
   useEffect(() => {
     databaseService.getBypassPin().then((pin) => {
       if (pin) setCurrentBypassPin(pin);
     });
-  }, []);
+    databaseService.isUserRegistered().then((reg) => {
+      setHasRegisteredUser(reg);
+    });
+  }, [flashSyncVersion, sessionState]);
 
-  const TOTAL = 10;
+  const TOTAL = 5;
   
   // Real progress from BLE
   const progress = bleData.progress || 0;
 
-  // Toggle buka/tutup pintu (Buka pintu diwajibkan menggunakan PIN Bypass)
+  // Toggle buka/tutup pintu (Buka pintu diwajibkan menggunakan PIN Bypass & BLE aktif)
   const toggleDoor = async () => {
+    if (connectionState !== "connected") {
+      alert("Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dikontrol saat terhubung ke perangkat BLE.");
+      return;
+    }
     if (doorStatus === "locked") {
       setBypassPurpose("unlock");
       setEmergencyOpen(true);
@@ -97,83 +99,41 @@ function AppContent() {
     }
   };
 
-  // Side-panel gyro live feed
+  // Guard krusial: Jika koneksi BLE terputus saat proses autentikasi atau registrasi sedang berjalan,
+  // paksa (force) kembali ke idle mode secara instan dan bersihkan data sesi aktif.
+  // Selain itu, pastikan status pintu kembali ke locked (failsafe solenoid pintu).
   useEffect(() => {
-    gyroInterval.current = setInterval(() => {
-      const t = gyroT.current++;
-      setGyroData((prev) => [...prev.slice(-MAX_G + 1), gyro(t)]);
-    }, 120);
-    return () => { if (gyroInterval.current) clearInterval(gyroInterval.current); };
-  }, []);
-
-  // Simulator telemetry otomatis jika Dev Mode aktif dan belum tersambung ke hardware fisik
-  useEffect(() => {
-    let simInterval: ReturnType<typeof setInterval> | null = null;
-    if (sessionState === "scanning" && connectionState !== "connected" && isDevMode) {
-      let win = 0;
-      simInterval = setInterval(() => {
-        win++;
-        const conf = 91.0 + win * 0.8 + (Math.random() * 0.4);
-        const ll = -145.0 + win * 0.5;
-        const meanVal = 0.42 + (Math.random() - 0.5) * 0.04;
-        const varVal = 1.15 + (Math.random() - 0.5) * 0.08;
-        const stdVal = Math.sqrt(varVal);
-
-        setBleData({
-          score: `${conf.toFixed(1)}%`,
-          vector: `[${meanVal.toFixed(2)}, ${varVal.toFixed(2)}, ${stdVal.toFixed(2)}]`,
-          cov: `[-0.14, 2.84]`,
-          delta: `+0.05`,
-          progress: win,
-          authStatus: win >= 10 ? "success" : "scanning",
-          telemetry: {
-            windowIndex: win,
-            isZUPTValid: true,
-            confidenceScore: conf,
-            logLikelihood: ll,
-            mean: meanVal,
-            variance: varVal,
-            stdDev: stdVal,
-            skewness: -0.14,
-            kurtosis: 2.84,
-            adaptiveThreshold: -150.0,
-            emaDelta: 0.048,
-            freq: "100 Hz",
-            sigma: varVal.toFixed(3),
-            zupt: "Valid (Active Gait)",
-            ghmm: ll.toFixed(2),
-            th: "-150.00",
-            alpha: "0.15",
-            dw: "3.0s (N=300)",
-          }
+    if (connectionState !== "connected") {
+      if (sessionState === "scanning" || mode !== null) {
+        setSessionState("idle");
+        setMode(null);
+        resetBleData();
+        addLog({
+          type: "system",
+          status: "Warning",
+          message: "Koneksi Smart Key BLE terputus saat proses berjalan. Sesi aktif dibatalkan secara otomatis ke Idle mode.",
         });
-
-        if (win >= 10) {
-          if (simInterval) clearInterval(simInterval);
-          setSessionState("success");
-          if (mode === "auth") {
-            setDoorStatus("unlocked");
-          }
-        }
-      }, 2400);
+      }
+      if (doorStatus === "unlocked") {
+        setDoorStatus("locked");
+        addLog({
+          type: "system",
+          status: "Info",
+          message: "Koneksi BLE terputus: Status pintu dikembalikan ke Terkunci (Failsafe LOCKED).",
+        });
+      }
     }
-    return () => {
-      if (simInterval) clearInterval(simInterval);
-    };
-  }, [sessionState, connectionState, isDevMode, mode, setBleData]);
+  }, [connectionState, sessionState, mode, doorStatus, resetBleData, addLog]);
 
   const startSession = async (m: "auth" | "training") => {
     if (connectionState !== "connected") {
-      if (isDevMode) {
-        setMode(m);
-        setSessionState("scanning");
-        resetBleData();
-        return;
-      }
-      alert("Hubungkan ke Smart Key terlebih dahulu!");
+      alert("Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai.");
       return;
     }
-    const cmd = m === "auth" ? "START_AUTH" : "TRAIN:0";
+    const profiles = await databaseService.getUserProfiles();
+    const defaultName = profiles.length > 0 ? profiles[0].name : "User 1";
+    setActiveSession({ mode: m, slot: 0, name: defaultName });
+    const cmd = m === "auth" ? "START_AUTH" : `TRAIN:0:${defaultName}`;
     const success = await sendCommand(cmd);
     if (success) {
       setMode(m);
@@ -185,21 +145,33 @@ function AppContent() {
   // Mulai registrasi dengan proteksi PIN jika sudah pernah terdaftar
   const handleStartRegistration = async () => {
     if (connectionState !== "connected") {
-      if (isDevMode) {
-        setMode("training");
-        setSessionState("scanning");
-        resetBleData();
-        return;
-      }
-      alert("Hubungkan ke Smart Key terlebih dahulu!");
+      alert("Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai registrasi.");
       return;
     }
     const isRegistered = await databaseService.isUserRegistered();
     if (isRegistered) {
+      // Guard PIN 1x di awal untuk memastikan pemilik sah
       setBypassPurpose("re_register");
       setEmergencyOpen(true);
     } else {
-      startSession("training");
+      // Jika belum ada yang terdaftar, langsung buka dialog slot & nama
+      setRegisterModalOpen(true);
+    }
+  };
+
+  const startRegistrationSession = async (slot: number, name: string) => {
+    setRegisterModalOpen(false);
+    if (connectionState !== "connected") {
+      alert("Smart Key belum terhubung via Bluetooth!\n\nTidak dapat memulai sesi registrasi tanpa koneksi BLE.");
+      return;
+    }
+    setActiveSession({ mode: "training", slot, name });
+
+    const success = await sendCommand(`TRAIN:${slot}:${name}`);
+    if (success) {
+      setMode("training");
+      setSessionState("scanning");
+      resetBleData();
     }
   };
 
@@ -217,15 +189,12 @@ function AppContent() {
   // Perbaikan bug mancet 10/10 dan trigger status kunci pintu
   useEffect(() => {
     if (sessionState === "scanning") {
-      // 1. Skenario Registrasi Selesai (10/10)
+      // 1. Skenario Registrasi Selesai (5/5)
       if (mode === "training" && progress >= TOTAL) {
         const t = setTimeout(() => {
           setSessionState("success");
-          addLog({ type: "reg", status: "Success", message: "Registrasi 10 Jendela Selesai & Tersimpan ke SQLite" });
-          // Otomatis buka form pembuatan PIN Bypass setelah selesai
-          setTimeout(() => {
-            setSetPinOpen(true);
-          }, 800);
+          addLog({ type: "reg", status: "Success", message: "Registrasi 5 Jendela Selesai & Tersimpan ke Flash / SQLite" });
+          // TIDAK memunculkan popup PIN lagi, data langsung tersimpan aman
         }, 500);
         return () => clearTimeout(t);
       } 
@@ -234,7 +203,7 @@ function AppContent() {
         const finalStatus = (bleData.authStatus === "success" || (progress >= TOTAL && bleData.telemetry.confidenceScore >= 80.0)) ? "success" : "failed";
         const t = setTimeout(() => {
           setSessionState(finalStatus);
-          if (finalStatus === "success") {
+          if (finalStatus === "success" && connectionState === "connected") {
             setDoorStatus("unlocked");
           } else {
             setDoorStatus("locked");
@@ -243,7 +212,7 @@ function AppContent() {
         return () => clearTimeout(t);
       }
     }
-  }, [bleData.authStatus, bleData.telemetry.confidenceScore, sessionState, mode, progress, TOTAL, addLog]);
+  }, [bleData.authStatus, bleData.telemetry.confidenceScore, sessionState, mode, progress, TOTAL, connectionState, addLog]);
 
   const isScanning = sessionState === "scanning";
   const isResult = sessionState === "success" || sessionState === "failed";
@@ -285,6 +254,7 @@ function AppContent() {
               { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem" },
               { icon: KeyRound, action: () => setPinSettingsOpen(true), color: TEAL_DIM, bg: TEAL_BG, border: TEAL_BORDER, label: "Pengaturan PIN Bypass" },
               { icon: History, action: () => setLogOpen(true), color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", label: "Riwayat Log" },
+              { icon: GitCompare, action: () => setComparisonOpen(true), color: "#0D9488", bg: "#F0FDFA", border: "#99F6E4", label: "Komparasi Gait (PR Diff)" },
             ].map(({ icon: Icon, action, color, bg, border, label }) => (
               <button key={label} onClick={action} title={label} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer" style={{ background: bg, border: `1px solid ${border}` }}>
                 <Icon size={15} style={{ color }} />
@@ -320,39 +290,49 @@ function AppContent() {
         <div className="max-w-4xl mx-auto flex flex-col md:grid md:grid-cols-2 md:gap-6 md:items-start gap-4">
           {/* Kolom Kiri: Kontrol Pintu & Banner Hasil */}
           <div className="flex flex-col gap-4">
-            {/* Kartu Tombol Kunci Pintu */}
+            {/* Kartu Tombol Kunci Pintu (Compact) */}
             <div
-              className="bg-white rounded-2xl p-6 flex flex-col items-center justify-center text-center border border-[#E2E8F0] shadow-sm"
+              className="bg-white rounded-2xl p-3.5 px-4 flex items-center justify-between border border-[#E2E8F0] shadow-2xs"
             >
-              <button
-                onClick={toggleDoor}
-                className="w-20 h-20 rounded-3xl flex items-center justify-center transition-all active:scale-90 cursor-pointer"
-                style={{
-                  background: doorStatus === "unlocked" ? "linear-gradient(135deg, #22C55E 0%, #16A34A 100%)" : "#FFFFFF",
-                  border: `2px solid ${doorStatus === "unlocked" ? "#16A34A" : "#CBD5E1"}`,
-                  boxShadow: doorStatus === "unlocked" ? "0 8px 24px rgba(22,163,74,0.3)" : "0 3px 10px rgba(30,41,59,0.06)",
-                  color: doorStatus === "unlocked" ? "#FFFFFF" : "#64748B",
-                }}
-                title={doorStatus === "unlocked" ? "Ketuk untuk Menutup/Mengunci" : "Ketuk untuk Membuka"}
-              >
-                {doorStatus === "unlocked" ? <Unlock size={36} /> : <Lock size={36} />}
-              </button>
-
-              <div className="mt-3.5 flex flex-col items-center text-center">
-                <span
-                  className="px-3.5 py-1 rounded-full text-[0.65rem] font-bold tracking-wider inline-block transition-colors"
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={toggleDoor}
+                  className="w-13 h-13 rounded-2xl flex items-center justify-center transition-all active:scale-90 cursor-pointer shrink-0"
                   style={{
-                    background: doorStatus === "unlocked" ? "#DCFCE7" : "#FEE2E2",
-                    color: doorStatus === "unlocked" ? "#15803D" : "#B91C1C",
-                    border: `1px solid ${doorStatus === "unlocked" ? "#BBF7D0" : "#FECACA"}`,
-                    fontFamily: MONO,
+                    background: doorStatus === "unlocked" ? "linear-gradient(135deg, #22C55E 0%, #16A34A 100%)" : "#FFFFFF",
+                    border: `1.5px solid ${doorStatus === "unlocked" ? "#16A34A" : "#CBD5E1"}`,
+                    boxShadow: doorStatus === "unlocked" ? "0 4px 14px rgba(22,163,74,0.25)" : "0 2px 6px rgba(30,41,59,0.05)",
+                    color: doorStatus === "unlocked" ? "#FFFFFF" : "#64748B",
                   }}
+                  title={doorStatus === "unlocked" ? "Ketuk untuk Menutup/Mengunci" : "Ketuk untuk Membuka"}
                 >
-                  {doorStatus === "unlocked" ? "UNLOCKED (TERBUKA)" : "LOCKED (TERKUNCI)"}
+                  {doorStatus === "unlocked" ? <Unlock size={24} /> : <Lock size={24} />}
+                </button>
+
+                <div className="flex flex-col">
+                  <div>
+                    <span
+                      className="px-2.5 py-0.5 rounded-full text-[0.6rem] font-bold tracking-wider inline-block transition-colors"
+                      style={{
+                        background: doorStatus === "unlocked" ? "#DCFCE7" : "#FEE2E2",
+                        color: doorStatus === "unlocked" ? "#15803D" : "#B91C1C",
+                        border: `1px solid ${doorStatus === "unlocked" ? "#BBF7D0" : "#FECACA"}`,
+                        fontFamily: MONO,
+                      }}
+                    >
+                      {doorStatus === "unlocked" ? "UNLOCKED (TERBUKA)" : "LOCKED (TERKUNCI)"}
+                    </span>
+                  </div>
+                  <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.58rem", marginTop: 3 }}>
+                    {doorStatus === "unlocked" ? "Ketuk ikon untuk mengunci pintu" : "Ketuk ikon untuk membuka via PIN"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="hidden sm:flex items-center text-right">
+                <span className="px-2 py-1 rounded bg-slate-50 border border-slate-200" style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem" }}>
+                  FAIL-SAFE READY
                 </span>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.62rem", marginTop: 4 }}>
-                  {doorStatus === "unlocked" ? "Ketuk ikon untuk menutup / mengunci" : "Ketuk ikon untuk membuka pintu"}
-                </p>
               </div>
             </div>
 
@@ -366,25 +346,24 @@ function AppContent() {
                 >
                   {sessionState === "success" ? <CheckCircle2 size={44} style={{ color: "#16A34A" }} /> : <XCircle size={44} style={{ color: "#DC2626" }} />}
                   <p className="mt-3" style={{ color: sessionState === "success" ? "#15803D" : "#B91C1C", fontFamily: MONO, fontWeight: 700, fontSize: "0.78rem", letterSpacing: "0.06em" }}>
-                    {sessionState === "success" ? (mode === "auth" ? "IDENTITAS TERVERIFIKASI" : "PENDAFTARAN BERHASIL") : "AUTENTIKASI GAGAL"}
+                    {sessionState === "success"
+                      ? (mode === "auth"
+                          ? (verifiedUserName && verifiedUserName !== "PIN_BYPASS"
+                              ? `IDENTITAS ${verifiedUserName.toUpperCase()} TERVERIFIKASI`
+                              : "IDENTITAS TERVERIFIKASI")
+                          : "PENDAFTARAN BERHASIL")
+                      : "AUTENTIKASI GAGAL"}
                   </p>
                   <p className="mt-1" style={{ color: "#64748B", fontFamily: SANS, fontSize: "0.75rem" }}>
-                    {sessionState === "success" ? (mode === "auth" ? "Akses ke Smart Key diberikan." : "Profil gaya berjalan telah tersimpan.") : "Skor kepercayaan di bawah ambang batas."}
+                    {sessionState === "success"
+                      ? (mode === "auth"
+                          ? (verifiedUserName && verifiedUserName !== "PIN_BYPASS"
+                              ? `Akses diberikan kepada ${verifiedUserName}. Pintu terbuka.`
+                              : "Akses ke Smart Key diberikan. Pintu terbuka.")
+                          : "Profil gaya berjalan telah tersimpan di Flash & SQLite.")
+                      : "Skor kepercayaan di bawah ambang batas CIR 80%."}
                   </p>
-                  {mode === "training" && sessionState === "success" && (
-                    <button
-                      onClick={() => {
-                        dismiss();
-                        setSetPinOpen(true);
-                      }}
-                      className="mt-3 w-full py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer shadow-sm"
-                      style={{ background: "#2563EB", color: "#FFFFFF", fontFamily: MONO, fontSize: "0.68rem", fontWeight: 700 }}
-                    >
-                      <KeyRound size={14} />
-                      <span>BUAT PIN BYPASS SEKARANG</span>
-                    </button>
-                  )}
-                  <button onClick={dismiss} className="mt-3 px-6 py-2 rounded-xl transition-all active:scale-95" style={{ background: "#FFFFFF", border: `1px solid ${sessionState === "success" ? "#BBF7D0" : "#FECACA"}`, color: sessionState === "success" ? "#16A34A" : "#DC2626", fontFamily: MONO, fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em" }}>
+                  <button onClick={dismiss} className="mt-4 px-6 py-2 rounded-xl transition-all active:scale-95 cursor-pointer" style={{ background: "#FFFFFF", border: `1px solid ${sessionState === "success" ? "#BBF7D0" : "#FECACA"}`, color: sessionState === "success" ? "#16A34A" : "#DC2626", fontFamily: MONO, fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em" }}>
                     TUTUP
                   </button>
                 </motion.div>
@@ -401,6 +380,7 @@ function AppContent() {
                   progress={progress}
                   total={TOTAL}
                   telemetry={bleData.telemetry}
+                  liveSample={liveSample}
                   isDevMode={isDevMode}
                 />
               ) : mode === "auth" ? (
@@ -413,6 +393,7 @@ function AppContent() {
                   diagCov={bleData.cov}
                   diagDelta={bleData.delta}
                   telemetry={bleData.telemetry}
+                  liveSample={liveSample}
                   isDevMode={isDevMode}
                 />
               ) : (
@@ -436,33 +417,90 @@ function AppContent() {
         <div className="max-w-4xl mx-auto flex flex-col gap-2.5">
           {/* Main Action Buttons: 2 columns on tablet, 1 column on phone */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-            {/* Mulai Autentikasi */}
+            {/* Mulai Autentikasi (Dinonaktifkan jika belum connect BLE atau Flash kosong) */}
             <button
-              onClick={() => !isScanning && startSession("auth")}
-              disabled={isScanning}
+              onClick={() => {
+                if (connectionState !== "connected") {
+                  alert(
+                    "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu."
+                  );
+                  return;
+                }
+                if (!hasRegisteredUser) {
+                  alert(
+                    "Perhatian: Belum ada profil pengguna terdaftar di memori Flash RP2040!\n\nSilakan lakukan registrasi terlebih dahulu dengan mengetuk tombol 'Mulai Registrasi' di samping."
+                  );
+                  return;
+                }
+                if (!isScanning) startSession("auth");
+              }}
+              disabled={isScanning || !hasRegisteredUser || connectionState !== "connected"}
               className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
               style={{
-                background: isScanning ? "#F1F5F9" : "linear-gradient(135deg,#16A34A,#15803D)",
-                cursor: isScanning ? "not-allowed" : "pointer",
-                boxShadow: isScanning ? "none" : "0 4px 16px rgba(22,163,74,0.28)",
+                background: (connectionState !== "connected" || !hasRegisteredUser)
+                  ? "#F8FAFC"
+                  : isScanning
+                  ? "#F1F5F9"
+                  : "linear-gradient(135deg,#16A34A,#15803D)",
+                border: (connectionState !== "connected" || !hasRegisteredUser) ? "1.5px dashed #CBD5E1" : "none",
+                cursor: (connectionState !== "connected" || !hasRegisteredUser || isScanning) ? "not-allowed" : "pointer",
+                boxShadow: (connectionState !== "connected" || !hasRegisteredUser || isScanning) ? "none" : "0 4px 16px rgba(22,163,74,0.28)",
               }}
+              title={
+                connectionState !== "connected"
+                  ? "Hubungkan Bluetooth terlebih dahulu"
+                  : !hasRegisteredUser
+                  ? "Daftarkan profil gait pengguna terlebih dahulu"
+                  : "Mulai autentikasi gaya berjalan"
+              }
             >
-              <Shield size={16} style={{ color: isScanning ? "#CBD5E1" : "#FFF" }} />
-              <span style={{ color: isScanning ? "#CBD5E1" : "#FFF", fontFamily: MONO, fontWeight: 700, fontSize: "0.78rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Mulai Autentikasi
+              <Shield size={16} style={{ color: (connectionState !== "connected" || !hasRegisteredUser || isScanning) ? "#94A3B8" : "#FFF" }} />
+              <span style={{
+                color: (connectionState !== "connected" || !hasRegisteredUser || isScanning) ? "#94A3B8" : "#FFF",
+                fontFamily: MONO,
+                fontWeight: 700,
+                fontSize: "0.78rem",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase"
+              }}>
+                {connectionState !== "connected"
+                  ? "Mulai Autentikasi (Hubungkan BLE)"
+                  : !hasRegisteredUser
+                  ? "Mulai Autentikasi (Daftar Dulu)"
+                  : "Mulai Autentikasi"}
               </span>
             </button>
 
             {/* Mulai Registrasi */}
             <button
-              onClick={() => !isScanning && handleStartRegistration()}
-              disabled={isScanning}
+              onClick={() => {
+                if (connectionState !== "connected") {
+                  alert(
+                    "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu."
+                  );
+                  return;
+                }
+                if (!isScanning) handleStartRegistration();
+              }}
+              disabled={isScanning || connectionState !== "connected"}
               className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
-              style={{ background: "transparent", border: `1.5px solid ${isScanning ? "#E2E8F0" : "#BFDBFE"}`, cursor: isScanning ? "not-allowed" : "pointer" }}
+              style={{
+                background: "transparent",
+                border: `1.5px solid ${isScanning || connectionState !== "connected" ? "#E2E8F0" : "#BFDBFE"}`,
+                cursor: isScanning || connectionState !== "connected" ? "not-allowed" : "pointer"
+              }}
+              title={connectionState !== "connected" ? "Hubungkan Bluetooth terlebih dahulu" : "Mulai registrasi profil gaya berjalan baru"}
             >
-              <Info size={16} style={{ color: isScanning ? "#CBD5E1" : "#2563EB" }} />
-              <span style={{ color: isScanning ? "#CBD5E1" : "#2563EB", fontFamily: MONO, fontWeight: 600, fontSize: "0.78rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Mulai Registrasi
+              <Info size={16} style={{ color: isScanning || connectionState !== "connected" ? "#CBD5E1" : "#2563EB" }} />
+              <span style={{
+                color: isScanning || connectionState !== "connected" ? "#CBD5E1" : "#2563EB",
+                fontFamily: MONO,
+                fontWeight: 600,
+                fontSize: "0.78rem",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase"
+              }}>
+                {connectionState !== "connected" ? "Mulai Registrasi (Hubungkan BLE)" : "Mulai Registrasi"}
               </span>
             </button>
           </div>
@@ -473,16 +511,26 @@ function AppContent() {
               {doorStatus === "locked" ? (
                 <button
                   onClick={() => {
+                    if (connectionState !== "connected") {
+                      alert("Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dibuka saat terhubung ke perangkat BLE.");
+                      return;
+                    }
                     setBypassPurpose("unlock");
                     setEmergencyOpen(true);
                   }}
-                  className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
-                  style={{ background: TEAL_BG, border: `1.5px solid ${TEAL_BORDER}` }}
-                  title="Buka Pintu Menggunakan PIN Emergency Bypass"
+                  disabled={connectionState !== "connected"}
+                  className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                  style={{
+                    background: connectionState !== "connected" ? "#F8FAFC" : TEAL_BG,
+                    border: `1.5px solid ${connectionState !== "connected" ? "#E2E8F0" : TEAL_BORDER}`,
+                    cursor: connectionState !== "connected" ? "not-allowed" : "pointer",
+                    opacity: connectionState !== "connected" ? 0.6 : 1,
+                  }}
+                  title={connectionState !== "connected" ? "Hubungkan Bluetooth terlebih dahulu" : "Buka Pintu Menggunakan PIN Emergency Bypass"}
                 >
-                  <Zap size={15} style={{ color: TEAL_DIM }} />
-                  <span style={{ color: TEAL_DIM, fontFamily: MONO, fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                    Bypass (PIN Buka Pintu)
+                  <Zap size={15} style={{ color: connectionState !== "connected" ? "#94A3B8" : TEAL_DIM }} />
+                  <span style={{ color: connectionState !== "connected" ? "#94A3B8" : TEAL_DIM, fontFamily: MONO, fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    {connectionState !== "connected" ? "Bypass PIN (Hubungkan BLE)" : "Bypass (PIN Buka Pintu)"}
                   </span>
                 </button>
               ) : (
@@ -532,8 +580,22 @@ function AppContent() {
         onClose={() => setEmergencyOpen(false)}
         purpose={bypassPurpose}
         correctPin={currentBypassPin}
-        onUnlock={() => setDoorStatus("unlocked")}
-        onVerified={() => startSession("training")}
+        onUnlock={() => {
+          if (connectionState === "connected") {
+            setDoorStatus("unlocked");
+          } else {
+            alert("Smart Key belum terhubung via Bluetooth! Pintu fisik tetap terkunci.");
+          }
+        }}
+        onVerified={() => {
+          setEmergencyOpen(false);
+          setRegisterModalOpen(true);
+        }}
+      />
+      <RegisterUserModal
+        open={registerModalOpen}
+        onClose={() => setRegisterModalOpen(false)}
+        onStart={startRegistrationSession}
       />
       <SetPinModal
         open={setPinOpen}
@@ -551,6 +613,10 @@ function AppContent() {
           setCurrentBypassPin(newPin);
           addLog({ type: "system", status: "Success", message: `PIN Bypass Berhasil Diubah ke: ${newPin}` });
         }}
+      />
+      <GaitComparisonModal
+        open={comparisonOpen}
+        onClose={() => setComparisonOpen(false)}
       />
     </div>
   );

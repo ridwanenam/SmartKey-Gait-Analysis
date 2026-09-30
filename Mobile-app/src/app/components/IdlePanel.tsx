@@ -26,7 +26,7 @@ export function IdlePanel({ isConnected, isDevMode }: IdlePanelProps) {
       >
         <div className="flex items-center gap-2">
           <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.58rem", letterSpacing: "0.12em", textTransform: "uppercase" }}>
-            STATUS SISTEM · Unit A7
+            STATUS SISTEM · SmartKey Wearable
           </p>
           {isDevMode && (
             <span

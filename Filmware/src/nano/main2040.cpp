@@ -8,13 +8,14 @@
 
 // Objek Subsistem Perangkat Lunak
 FeatureExtraction featureExtractor;
-GHMMClassifier   ghmm;
+GHMMClassifier   ghmm[MAX_USERS];
 BLEHandler       ble;
 
 // Variabel Status & Konfigurasi Runtime
 SystemState currentState = STATE_IDLE;
 UserModel activeUsers[MAX_USERS];
 uint8_t currentSlotTarget = 0;
+char targetUserName[16] = "User_1";
 uint8_t validWindowCounter = 0;
 float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 
@@ -23,9 +24,15 @@ unsigned long previousSampleTime = 0;
 unsigned long calibrationStartTime = 0;
 unsigned long lastCalibNotifyTime = 0;
 
-// Variabel Akumulator Online Calibration (5 Detik)
+// Variabel Akumulator Online Calibration (500 ms)
 float sumAccX = 0.0f, sumAccY = 0.0f, sumAccZ = 0.0f;
 uint16_t calibSampleCount = 0;
+
+enum CalibrationTarget {
+    CALIB_TARGET_TRAINING,
+    CALIB_TARGET_AUTH
+};
+CalibrationTarget calibTarget = CALIB_TARGET_TRAINING;
 
 // Deklarasi Prototip Fungsi Internal
 void handleIncomingCommands();
@@ -54,7 +61,7 @@ void setup() {
         while (1);
     }
 
-    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Idle Mode)"));
+    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode)"));
 }
 
 void loop() {
@@ -67,8 +74,9 @@ void loop() {
     if (currentMillis - previousSampleTime >= IMU_SAMPLE_INTERVAL_MS) {
         previousSampleTime = currentMillis;
 
-        float ax = 0, ay = 0, az = 0;
-        float gx = 0, gy = 0, gz = 0;
+        // Gunakan static agar jika bus I2C belum siap pada siklus 10ms ini, nilai fisik terakhir dipertahankan (mencegah drop ke 0.0g)
+        static float ax = 0.0f, ay = 0.0f, az = 1.0f;
+        static float gx = 0.0f, gy = 0.0f, gz = 0.0f;
 
         if (IMU.accelerationAvailable()) {
             IMU.readAcceleration(ax, ay, az);
@@ -77,7 +85,34 @@ void loop() {
             IMU.readGyroscope(gx, gy, gz);
         }
 
-        // 3. Eksekusi Finite State Machine
+        // 3. Streaming Gelombang Sensor Fisik Nyata (20 Hz / tiap 50 ms)
+        static unsigned long lastLiveSampleTime = 0;
+        if (currentMillis - lastLiveSampleTime >= 50) {
+            lastLiveSampleTime = currentMillis;
+            if (ble.isConnected() && (currentState == STATE_AUTHENTICATING || currentState == STATE_TRAINING || currentState == STATE_CALIBRATING)) {
+                // Hitung magnitudo akselerasi dan hilangkan komponen gravitasi bumi 1.0g
+                float accMag = sqrtf(ax * ax + ay * ay + az * az);
+                float dynAcc = accMag - 1.0f; // 0.0g saat diam
+
+                // Energi rotasi giroskop
+                float gyroEnergy = (gx * gx + gy * gy + gz * gz);
+                uint8_t isNowMoving = (gyroEnergy >= (ZUPT_ENERGY_THRESHOLD * 0.4f) || fabsf(dynAcc) > 0.12f) ? 1 : 0;
+
+                // Tentukan nilai live waveform aktual
+                float liveSignal = dynAcc;
+                if (!isNowMoving && fabsf(dynAcc) < 0.04f) {
+                    liveSignal = 0.0f; // Bersih 0.0g saat diam total
+                }
+
+                LiveSampleData liveData;
+                liveData.liveVal = liveSignal;
+                liveData.energy = gyroEnergy;
+                liveData.isMoving = isNowMoving;
+                ble.sendLiveSample(liveData);
+            }
+        }
+
+        // 4. Eksekusi Finite State Machine
         switch (currentState) {
             case STATE_IDLE:
                 processIdleState();
@@ -106,7 +141,15 @@ void loop() {
 // Memuat ulang profil terdaftar dari Flash ke RAM
 void reloadUsersFromFlash() {
     for (uint8_t i = 0; i < MAX_USERS; ++i) {
-        StorageManager::loadUser(i, activeUsers[i]);
+        UserModel loadedModel;
+        bool ok = StorageManager::loadUser(i, loadedModel);
+        if (ok && loadedModel.isRegistered) {
+            activeUsers[i] = loadedModel;
+        } else {
+            activeUsers[i].isRegistered = false;
+            memset(&activeUsers[i], 0, sizeof(UserModel));
+            ghmm[i].resetInference();
+        }
     }
 }
 
@@ -117,10 +160,34 @@ void handleIncomingCommands() {
         Serial.print(F("[BLE CMD] Diterima: "));
         Serial.println(cmd);
 
-        // Perintah Mulai Registrasi: "TRAIN:<slot>" atau "START_REG"
+        // Perintah Mulai Registrasi: "TRAIN:<slot>:<nama>" atau "TRAIN:<slot>" atau "START_REG"
         if (strncmp(cmd, "TRAIN:", 6) == 0 || strcmp(cmd, "START_REG") == 0) {
-            currentSlotTarget = (strncmp(cmd, "TRAIN:", 6) == 0) ? atoi(&cmd[6]) : 0;
+            currentSlotTarget = 0;
+            strncpy(targetUserName, "User_1", sizeof(targetUserName) - 1);
+            targetUserName[sizeof(targetUserName) - 1] = '\0';
+
+            if (strncmp(cmd, "TRAIN:", 6) == 0) {
+                // Format: TRAIN:<slot>:<nama> atau TRAIN:<slot>
+                char *slotStr = &cmd[6];
+                char *colon = strchr(slotStr, ':');
+                if (colon != NULL) {
+                    *colon = '\0';
+                    currentSlotTarget = atoi(slotStr);
+                    char *nameStr = colon + 1;
+                    if (strlen(nameStr) > 0) {
+                        strncpy(targetUserName, nameStr, sizeof(targetUserName) - 1);
+                        targetUserName[sizeof(targetUserName) - 1] = '\0';
+                    } else {
+                        snprintf(targetUserName, sizeof(targetUserName), "User_%d", currentSlotTarget + 1);
+                    }
+                } else {
+                    currentSlotTarget = atoi(slotStr);
+                    snprintf(targetUserName, sizeof(targetUserName), "User_%d", currentSlotTarget + 1);
+                }
+            }
+
             if (currentSlotTarget < MAX_USERS) {
+                calibTarget = CALIB_TARGET_TRAINING;
                 sumAccX = sumAccY = sumAccZ = 0.0f;
                 calibSampleCount = 0;
                 calibrationStartTime = millis();
@@ -129,33 +196,45 @@ void handleIncomingCommands() {
                 validWindowCounter = 0;
                 featureExtractor.resetBuffer();
 
-                // Segera kirim sinyal ke Mobile App: Status 2 = Memulai Kalibrasi Saku
+                // Segera kirim sinyal ke Mobile App: Status 2 = Penyelarasan Posisi Saku Cepat (500ms)
                 TelemetryData telem;
                 memset(&telem, 0, sizeof(TelemetryData));
                 telem.windowIndex = 0;
-                telem.isZUPTValid = 2; // 2 = Calibrating Pocket
+                telem.isZUPTValid = 2; // 2 = Calibrating Pocket Otomatis
                 telem.confidenceScore = 0.0f;
                 ble.sendTelemetry(telem);
 
-                Serial.print(F("[STATE] Memulai Online Calibration 5 Detik untuk Slot "));
-                Serial.println(currentSlotTarget);
+                Serial.print(F("[STATE] Memulai Penyelarasan Saku Otomatis 500ms untuk Registrasi Slot "));
+                Serial.print(currentSlotTarget);
+                Serial.print(F(" ("));
+                Serial.print(targetUserName);
+                Serial.println(F(")"));
             }
         }
         // Perintah Mulai Autentikasi Langkah Kaki
         else if (strcmp(cmd, "START_AUTH") == 0) {
             featureExtractor.resetBuffer();
-            ghmm.resetInference();
+            for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                ghmm[i].resetInference();
+            }
             validWindowCounter = 0;
-            currentState = STATE_AUTHENTICATING;
 
-            // Kirim notifikasi awal siap melangkah
+            // Masuk ke Kalibrasi Cepat 500ms otomatis sebelum autentikasi
+            calibTarget = CALIB_TARGET_AUTH;
+            sumAccX = sumAccY = sumAccZ = 0.0f;
+            calibSampleCount = 0;
+            calibrationStartTime = millis();
+            lastCalibNotifyTime = millis();
+            currentState = STATE_CALIBRATING;
+
             TelemetryData telem;
             memset(&telem, 0, sizeof(TelemetryData));
             telem.windowIndex = 0;
-            telem.isZUPTValid = 1;
+            telem.isZUPTValid = 2; // 2 = Calibrating Pocket Otomatis
+            telem.confidenceScore = 0.0f;
             ble.sendTelemetry(telem);
 
-            Serial.println(F("[STATE] Memulai Sesi Autentikasi Berjalan..."));
+            Serial.println(F("[STATE] Memulai Penyelarasan Saku Otomatis 500ms untuk Autentikasi..."));
         }
         // Perintah Batalkan Sesi Aktif
         else if (strcmp(cmd, "CANCEL") == 0) {
@@ -164,22 +243,56 @@ void handleIncomingCommands() {
             validWindowCounter = 0;
             Serial.println(F("[STATE] Sesi Dibatalkan -> Kembali ke Idle"));
         }
+        // Perintah Sinkronisasi Status Flash Memori: "SYNC_FLASH" atau "GET_USERS"
+        else if (strcmp(cmd, "SYNC_FLASH") == 0 || strcmp(cmd, "GET_USERS") == 0) {
+            reloadUsersFromFlash();
+            // Hanya kirim 4 slot (0 sampai 3) yang relevan dengan UI Mobile App
+            // Berikan jeda 80ms antar paket agar BLE connection interval Nina W102 (45-75ms) tidak menumpuk/menimpa notifikasi
+            for (uint8_t i = 0; i < 4; ++i) {
+                char slotMsg[48];
+                if (activeUsers[i].isRegistered) {
+                    snprintf(slotMsg, sizeof(slotMsg), "FLASH_SLOT:%d:1:%s", i, activeUsers[i].userName);
+                } else {
+                    snprintf(slotMsg, sizeof(slotMsg), "FLASH_SLOT:%d:0:-", i);
+                }
+                ble.sendDoorCommand(slotMsg);
+                delay(80); // Jeda transmisi aman BLE
+            }
+            delay(50);
+            ble.sendDoorCommand("FLASH_SYNC_DONE");
+            Serial.println(F("[STORAGE] Status Flash Memori Terkirim Lengkap ke Ponsel"));
+        }
         // Perintah Hapus Satu User Tertentu: "DEL:<slot>" (Contoh: "DEL:1")
         else if (strncmp(cmd, "DEL:", 4) == 0) {
-            uint8_t slotToDelete = atoi(&cmd[4]);
-            StorageManager::deleteUser(slotToDelete);
-            reloadUsersFromFlash();
-            Serial.println(F("[STORAGE] Pengguna Berhasil Dihapus"));
-        }
-        // Perintah Hapus Seluruh User (Format All Flash)
-        else if (strcmp(cmd, "DEL:ALL") == 0) {
-            StorageManager::clearAllUsers();
-            reloadUsersFromFlash();
-            Serial.println(F("[STORAGE] Seluruh Memori Pengguna Diformat"));
+            if (strcmp(cmd, "DEL:ALL") == 0) {
+                for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                    activeUsers[i].isRegistered = false;
+                    memset(&activeUsers[i], 0, sizeof(UserModel));
+                    ghmm[i].resetInference();
+                }
+                StorageManager::clearAllUsers();
+                reloadUsersFromFlash();
+                ble.sendDoorCommand("DEL_ALL_SUCCESS");
+                Serial.println(F("[STORAGE] Seluruh Memori Pengguna Diformat"));
+            } else {
+                uint8_t slotToDelete = atoi(&cmd[4]);
+                if (slotToDelete < MAX_USERS) {
+                    activeUsers[slotToDelete].isRegistered = false;
+                    memset(&activeUsers[slotToDelete], 0, sizeof(UserModel));
+                    ghmm[slotToDelete].resetInference();
+                    StorageManager::deleteUser(slotToDelete);
+                    reloadUsersFromFlash();
+                    char delMsg[32];
+                    snprintf(delMsg, sizeof(delMsg), "DEL_SUCCESS:%d", slotToDelete);
+                    ble.sendDoorCommand(delMsg);
+                    Serial.print(F("[STORAGE] Pengguna Slot Dihapus: "));
+                    Serial.println(slotToDelete);
+                }
+            }
         }
         // Emergency Action: Pembukaan Pintu Cepat via PIN Valid Mobile App
         else if (strcmp(cmd, "BYPASS_OPEN") == 0) {
-            ble.sendDoorCommand("OPEN_DOOR");
+            ble.sendDoorCommand("OPEN_DOOR:PIN_BYPASS");
             Serial.println(F("[FAIL-SAFE] Emergency Bypass Aktif: Membuka Pintu!"));
         }
         // Manual Door Lock: Kunci Pintu Manual dari Mobile App
@@ -194,21 +307,10 @@ void processIdleState() {
     // Mode siaga daya rendah
 }
 
-// Fase 5 Detik Pertama: Mengunci Sudut Kemiringan Saku Pengguna
+// Fase Kalibrasi Saku Cepat Otomatis (500 ms)
 void processCalibrationState() {
     unsigned long now = millis();
     unsigned long elapsed = now - calibrationStartTime;
-
-    // Kirim denyut berkala per 1 detik agar Mobile App menampilkan hitung mundur
-    if (now - lastCalibNotifyTime >= 1000) {
-        lastCalibNotifyTime = now;
-        TelemetryData telem;
-        memset(&telem, 0, sizeof(TelemetryData));
-        telem.windowIndex = 0;
-        telem.isZUPTValid = 2; // Status Kalibrasi
-        telem.confidenceScore = (float)elapsed / 1000.0f; // 1.0 s.d. 5.0 detik
-        ble.sendTelemetry(telem);
-    }
 
     if (elapsed >= CALIBRATION_DURATION_MS) {
         if (calibSampleCount > 0) {
@@ -225,17 +327,22 @@ void processCalibrationState() {
 
         featureExtractor.resetBuffer();
         validWindowCounter = 0;
-        currentState = STATE_TRAINING;
+
+        if (calibTarget == CALIB_TARGET_AUTH) {
+            currentState = STATE_AUTHENTICATING;
+            Serial.println(F("[STATE] Penyelarasan Saku 500ms Selesai -> Siap Autentikasi Langkah"));
+        } else {
+            currentState = STATE_TRAINING;
+            Serial.println(F("[STATE] Penyelarasan Saku 500ms Selesai -> Siap Registrasi Langkah"));
+        }
 
         // Beritahu Mobile App bahwa kalibrasi selesai (isZUPTValid = 3) dan siap melangkah
         TelemetryData telem;
         memset(&telem, 0, sizeof(TelemetryData));
         telem.windowIndex = 0;
         telem.isZUPTValid = 3; // 3 = Selesai Kalibrasi, Mulai Melangkah
-        telem.confidenceScore = 5.0f;
+        telem.confidenceScore = 0.0f;
         ble.sendTelemetry(telem);
-
-        Serial.println(F("[STATE] Kalibrasi Selesai -> Silakan Berjalan Normal"));
     }
 }
 
@@ -262,29 +369,38 @@ void processTrainingState(float gx, float gy, float gz) {
 
             validWindowCounter++;
             telem.windowIndex = validWindowCounter;
-            telem.confidenceScore = (float)validWindowCounter * 10.0f; // Progres % registrasi
+            telem.confidenceScore = (float)validWindowCounter * (100.0f / (float)TARGET_WINDOWS); // Progres % registrasi
 
             Serial.print(F("[TRAIN] Jendela Valid Terkumpul: "));
             Serial.print(validWindowCounter);
-            Serial.println(F("/10"));
+            Serial.print(F("/"));
+            Serial.println(TARGET_WINDOWS);
 
-            // Evaluasi Kuota 10 Jendela
+            // Evaluasi Kuota Jendela Valid
             if (validWindowCounter >= TARGET_WINDOWS) {
-                char userName[16];
-                snprintf(userName, sizeof(userName), "User_%d", currentSlotTarget + 1);
+                // Eksekusi Komputasi Awal Model GHMM untuk target user
+                ghmm[currentSlotTarget].trainInitialModel(activeUsers[currentSlotTarget], trainingFeaturesBuffer, targetUserName);
+                bool saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
+                if (!saveOk) {
+                    Serial.print(F("[STORAGE ERROR] Gagal menulis ke Flash! Mengulang kv_remove & kv_set... "));
+                    StorageManager::deleteUser(currentSlotTarget);
+                    saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
+                    Serial.println(saveOk ? F("SUKSES") : F("GAGAL"));
+                }
 
-                // Eksekusi Komputasi Awal Model GHMM
-                ghmm.trainInitialModel(activeUsers[currentSlotTarget], trainingFeaturesBuffer, userName);
-                StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
+                Serial.print(F("[SUCCESS] Model GHMM "));
+                Serial.print(targetUserName);
+                Serial.println(F(" Selesai & Tersimpan di Flash!"));
 
-                Serial.println(F("[SUCCESS] Model GHMM Selesai & Tersimpan di Flash!"));
-                ble.sendDoorCommand("TRAIN_SUCCESS");
+                char trainSuccessMsg[32];
+                snprintf(trainSuccessMsg, sizeof(trainSuccessMsg), "TRAIN_SUCCESS:%d:%s", currentSlotTarget, activeUsers[currentSlotTarget].userName);
+                ble.sendDoorCommand(trainSuccessMsg);
                 currentState = STATE_IDLE;
             }
         } else {
             // Jika diam/noise, pertahankan progres hitungan langkah yang sudah valid
             telem.windowIndex = validWindowCounter;
-            telem.confidenceScore = (float)validWindowCounter * 10.0f;
+            telem.confidenceScore = (float)validWindowCounter * (100.0f / (float)TARGET_WINDOWS);
             Serial.println(F("[ZUPT] Gerak Tidak Valid/Diam. Jendela Dibuang."));
         }
 
@@ -294,7 +410,7 @@ void processTrainingState(float gx, float gy, float gz) {
     }
 }
 
-// Fase Autentikasi Harian Real-Time (Edge AI Inference & Adaptasi EMA)
+// Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User & Adaptasi EMA)
 void processAuthenticationState(float gx, float gy, float gz) {
     bool windowComplete = featureExtractor.addSample(gx, gy, gz);
 
@@ -316,27 +432,66 @@ void processAuthenticationState(float gx, float gy, float gz) {
             validWindowCounter++;
             telem.windowIndex = validWindowCounter;
 
-            // Evaluasi terhadap profil pemilik rumah utama (Slot 0)
-            if (activeUsers[0].isRegistered) {
-                float logProb = ghmm.evaluateWindow(activeUsers[0], currentFeatures, validWindowCounter);
-                float confidence = ghmm.calculateConfidenceScore(logProb);
+            // Evaluasi terhadap seluruh profil pemilik yang terdaftar (Multiclass 1-vs-All)
+            int bestUserIdx = -1;
+            float bestConfidence = -1.0f;
+            float bestLogProb = -999.0f;
+            float userScores[MAX_USERS];
+            for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                userScores[i] = -1.0f;
+            }
 
-                telem.logLikelihood = logProb;
-                telem.confidenceScore = confidence;
-                telem.adaptiveThreshold = ghmm.getAdaptiveThreshold();
+            for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                if (activeUsers[i].isRegistered) {
+                    float logProb = ghmm[i].evaluateWindow(activeUsers[i], currentFeatures, validWindowCounter);
+                    float conf = ghmm[i].calculateConfidenceScore(logProb);
+                    userScores[i] = conf;
+                    if (conf > bestConfidence) {
+                        bestConfidence = conf;
+                        bestLogProb = logProb;
+                        bestUserIdx = i;
+                    }
+                }
+            }
 
-                // Evaluasi apakah akumulasi 10 jendela menembus syarat CIR >= 80%
+            if (bestUserIdx >= 0) {
+                telem.logLikelihood = bestLogProb;
+                telem.confidenceScore = bestConfidence;
+                telem.adaptiveThreshold = ghmm[bestUserIdx].getAdaptiveThreshold();
+
+                // Evaluasi apakah akumulasi 5 jendela menembus syarat CIR >= 80%
                 if (validWindowCounter >= TARGET_WINDOWS) {
-                    if (confidence >= CONFIDENCE_HIGH_THRESHOLD) {
-                        Serial.println(F("[AUTH] Autentikasi SAH! Membuka Pintu..."));
-                        ble.sendDoorCommand("OPEN_DOOR");
+                    // Kirim breakdown skor kemiripan seluruh slot yang terdaftar ke Mobile App
+                    char scoresMsg[64];
+                    int offset = snprintf(scoresMsg, sizeof(scoresMsg), "SCORES:");
+                    for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                        if (activeUsers[i].isRegistered && offset < (int)sizeof(scoresMsg) - 10) {
+                            offset += snprintf(scoresMsg + offset, sizeof(scoresMsg) - offset, "%d:%.1f|", i, userScores[i]);
+                        }
+                    }
+                    if (offset > 7 && scoresMsg[offset - 1] == '|') {
+                        scoresMsg[offset - 1] = '\0';
+                    }
+                    ble.sendDoorCommand(scoresMsg);
+                    delay(40);
 
-                        // Eksekusi Incremental Personalization via formula EMA
-                        float deltaEMA = ghmm.updateModelEMA(activeUsers[0], currentFeatures);
-                        telem.emaDelta = deltaEMA;
+                    if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD) {
+                        Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
+                        Serial.println(activeUsers[bestUserIdx].userName);
 
-                        // Perbarui data adaptif ke Flash memori internal
-                        StorageManager::saveUser(0, activeUsers[0]);
+                        char doorMsg[32];
+                        snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
+                        ble.sendDoorCommand(doorMsg);
+
+                        // Eksekusi Incremental Personalization via formula EMA hanya jika sangat yakin (>= 90%)
+                        if (bestConfidence >= 90.0f) {
+                            float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
+                            telem.emaDelta = deltaEMA;
+                            // Perbarui data adaptif ke Flash memori internal
+                            StorageManager::saveUser(bestUserIdx, activeUsers[bestUserIdx]);
+                        } else {
+                            telem.emaDelta = 0.0f;
+                        }
                     } else {
                         Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));
                         ble.sendDoorCommand("ACCESS_DENIED");
@@ -346,7 +501,7 @@ void processAuthenticationState(float gx, float gy, float gz) {
                     validWindowCounter = 0;
                 }
             } else {
-                // Kasus cadangan jika pengguna belum didaftarkan di memori Flash
+                // Kasus jika belum ada profil pengguna terdaftar di memori Flash
                 Serial.println(F("[AUTH] Profil Pengguna Belum Terdaftar di Flash!"));
                 telem.confidenceScore = 0.0f;
                 telem.logLikelihood = -999.0f;

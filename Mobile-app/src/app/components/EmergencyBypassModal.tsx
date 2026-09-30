@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Delete, CheckCircle2, XCircle, Zap, Clock, RotateCcw } from "lucide-react";
 import { useBLE } from "../context/BLEContext";
-import { databaseService } from "../services/databaseService";
+import { databaseService, formatLogTimestamp } from "../services/databaseService";
 
 type BypassState = "input" | "verifying" | "success" | "failed";
 
@@ -36,7 +36,7 @@ export function EmergencyBypassModal({
   onVerified,
   correctPin,
 }: EmergencyBypassModalProps) {
-  const { sendCommand, addLog } = useBLE();
+  const { sendCommand, addLog, connectionState } = useBLE();
   const [pin, setPin] = useState("");
   const [bypassState, setBypassState] = useState<BypassState>("input");
   const [shakeKey, setShakeKey] = useState(0);
@@ -66,7 +66,7 @@ export function EmergencyBypassModal({
     if (next.length === 6) {
       setBypassState("verifying");
       const startTime = Date.now();
-      const timestamp = new Date().toLocaleTimeString("id-ID");
+      const timestamp = formatLogTimestamp();
       addLog({ type: "auth", status: "Info", message: "Mencoba Emergency Bypass PIN" });
 
       verifyTimer.current = setTimeout(async () => {
@@ -76,6 +76,18 @@ export function EmergencyBypassModal({
           setLatencyMs(Math.max(28, Date.now() - startTime));
 
           if (isValid) {
+            if (purpose === "unlock" && connectionState !== "connected") {
+              setBypassState("failed");
+              setShakeKey((s) => s + 1);
+              addLog({
+                type: "system",
+                status: "Warning",
+                message: "Bypass Dibatalkan: Smart Key belum terhubung Bluetooth (Solenoid fisik tidak aktif)",
+              });
+              alert("Gagal membuka pintu:\n\nSmart Key belum terhubung via Bluetooth! Aktuator solenoid kunci pintu hanya dapat diaktifkan saat perangkat BLE terhubung.");
+              return;
+            }
+
             await sendCommand(`PIN_${next}`);
             setBypassState("success");
 
@@ -359,7 +371,7 @@ export function EmergencyBypassModal({
                       style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}
                     >
                       <span style={{ color: "#DC2626", fontFamily: MONO, fontSize: "0.6rem", fontWeight: 600 }}>
-                        AUDIT LOG: BYPASS_FAILED · {new Date().toLocaleTimeString("id-ID")} · Unit A7
+                        AUDIT LOG: BYPASS_FAILED · {new Date().toLocaleTimeString("id-ID")} · SmartKey Wearable
                       </span>
                     </div>
 
@@ -470,7 +482,7 @@ export function EmergencyBypassModal({
                     )}
 
                     <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.58rem", textAlign: "center", letterSpacing: "0.04em" }}>
-                      Bypass darurat dicatat dalam log audit · Unit #A7
+                      Bypass darurat dicatat dalam log audit · SmartKey Wearable
                     </p>
                   </motion.div>
                 )}

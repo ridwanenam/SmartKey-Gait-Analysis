@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Loader2, Activity, Zap, CheckCircle, AlertTriangle } from "lucide-react";
+import { Loader2, Activity, Cpu, Layers, Compass, Zap, CheckCircle, AlertTriangle } from "lucide-react";
 import { LiveSignalGraph } from "./LiveSignalGraph";
-import { BLETelemetry } from "../context/BLEContext";
+import { BLETelemetry, LiveSample } from "../context/BLEContext";
 
 interface AuthScanPanelProps {
   isScanning: boolean;
@@ -13,6 +13,7 @@ interface AuthScanPanelProps {
   diagCov: string;
   diagDelta: string;
   telemetry?: BLETelemetry;
+  liveSample?: LiveSample | null;
   isDevMode?: boolean;
 }
 
@@ -28,6 +29,7 @@ export function AuthScanPanel({
   diagCov,
   diagDelta,
   telemetry,
+  liveSample = null,
   isDevMode = false,
 }: AuthScanPanelProps) {
   const lineRef = useRef<HTMLDivElement>(null);
@@ -49,7 +51,7 @@ export function AuthScanPanel({
           style={{ borderBottom: "1px solid #F1F5F9" }}
         >
           <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.58rem", letterSpacing: "0.12em", textTransform: "uppercase" }}>
-            STATUS PEMINDAIAN · Unit A7
+            STATUS PEMINDAIAN · SmartKey Wearable
           </p>
           <div className="flex items-center gap-1.5">
             <div
@@ -65,18 +67,18 @@ export function AuthScanPanel({
           </div>
         </div>
 
-        {/* Scanning area */}
+        {/* Scanning area (Compact) */}
         <div
-          className="relative overflow-hidden flex flex-col items-center justify-center"
-          style={{ height: 180, background: isScanning ? "#F8FAFC" : "#FAFAFA" }}
+          className="relative overflow-hidden flex flex-col items-center justify-center py-3 px-4"
+          style={{ height: 110, background: isScanning ? "#F8FAFC" : "#FAFAFA" }}
         >
           {/* Horizontal scan lines background */}
-          {Array.from({ length: 9 }).map((_, i) => (
+          {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
               className="absolute left-0 right-0"
               style={{
-                top: `${(i + 1) * 10}%`,
+                top: `${(i + 1) * 16}%`,
                 height: 1,
                 background: isScanning ? "rgba(37,99,235,0.06)" : "rgba(203,213,225,0.5)",
               }}
@@ -97,37 +99,54 @@ export function AuthScanPanel({
           {isScanning && (
             <motion.div
               className="absolute left-0 right-0"
-              style={{ height: 40, background: "linear-gradient(180deg, transparent, rgba(37,99,235,0.06), transparent)", zIndex: 1, pointerEvents: "none" }}
+              style={{ height: 30, background: "linear-gradient(180deg, transparent, rgba(37,99,235,0.06), transparent)", zIndex: 1, pointerEvents: "none" }}
               animate={{ top: ["5%", "85%", "5%"] }}
               transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
             />
           )}
 
           {/* Center content */}
-          <div className="relative z-10 text-center px-6">
+          <div className="relative z-10 text-center px-4">
             {isScanning ? (
               <>
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <Loader2 size={16} className="animate-spin" style={{ color: "#2563EB" }} />
-                  <p style={{ color: "#2563EB", fontFamily: MONO, fontWeight: 700, fontSize: "0.72rem", letterSpacing: "0.06em" }}>
-                    MEMINDAI...
-                  </p>
-                </div>
-                <p style={{ color: "#1E293B", fontFamily: SANS, fontSize: "0.82rem", fontWeight: 600, lineHeight: 1.4 }}>
-                  Sedang Menganalisis<br />Gaya Berjalan...
-                </p>
-                <p className="mt-2" style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.65rem" }}>
-                  Langkah Terdeteksi:{" "}
-                  <span style={{ color: "#2563EB", fontWeight: 700 }}>{progress}/{total}</span>
-                </p>
-                {telemetry && !telemetry.isZUPTValid && progress > 0 && (
-                  <p className="mt-1" style={{ color: "#D97706", fontFamily: MONO, fontSize: "0.58rem" }}>
-                    Diam terdeteksi · Terus berjalan alami
-                  </p>
+                {telemetry?.zupt?.includes("Menyelaraskan") ? (
+                  <>
+                    <div className="flex items-center justify-center gap-1.5 mb-0.5">
+                      <Loader2 size={13} className="animate-spin" style={{ color: "#D97706" }} />
+                      <p style={{ color: "#D97706", fontFamily: MONO, fontWeight: 700, fontSize: "0.68rem", letterSpacing: "0.06em" }}>
+                        MENYELARASKAN POSISI SAKU...
+                      </p>
+                    </div>
+                    <p style={{ color: "#1E293B", fontFamily: SANS, fontSize: "0.78rem", fontWeight: 600 }}>
+                      Mengunci Sudut Sensor Otomatis
+                    </p>
+                    <p className="mt-1" style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.62rem" }}>
+                      Persiapan Deteksi Gait Biometrik
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-center gap-1.5 mb-0.5">
+                      <Loader2 size={13} className="animate-spin" style={{ color: "#2563EB" }} />
+                      <p style={{ color: "#2563EB", fontFamily: MONO, fontWeight: 700, fontSize: "0.68rem", letterSpacing: "0.06em" }}>
+                        {progress === 0 ? "SILAKAN BERJALAN NORMAL" : "MEMINDAI GAYA BERJALAN..."}
+                      </p>
+                    </div>
+                    <p style={{ color: "#1E293B", fontFamily: SANS, fontSize: "0.78rem", fontWeight: 600 }}>
+                      {progress === 0 ? "Sensor Siap Menganalisis Langkah" : "Sedang Menganalisis Pola Langkah"}
+                    </p>
+                    <p className="mt-1" style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.62rem" }}>
+                      Langkah Terdeteksi:{" "}
+                      <span style={{ color: "#2563EB", fontWeight: 700 }}>{progress}/{total}</span>
+                      {telemetry && !telemetry.isZUPTValid && progress > 0 && (
+                        <span style={{ color: "#D97706", marginLeft: 6 }}>· (Diam)</span>
+                      )}
+                    </p>
+                  </>
                 )}
               </>
             ) : (
-              <p style={{ color: "#94A3B8", fontFamily: SANS, fontSize: "0.82rem" }}>
+              <p style={{ color: "#94A3B8", fontFamily: SANS, fontSize: "0.75rem" }}>
                 Sistem siap · Tekan tombol untuk memulai
               </p>
             )}
@@ -137,12 +156,12 @@ export function AuthScanPanel({
           {["top-2 left-2", "top-2 right-2", "bottom-2 left-2", "bottom-2 right-2"].map((pos, i) => (
             <div
               key={i}
-              className={`absolute ${pos} w-4 h-4`}
+              className={`absolute ${pos} w-3.5 h-3.5`}
               style={{
                 borderColor: isScanning ? "rgba(37,99,235,0.35)" : "#E2E8F0",
                 borderStyle: "solid",
                 borderWidth: i === 0 ? "2px 0 0 2px" : i === 1 ? "2px 2px 0 0" : i === 2 ? "0 0 2px 2px" : "0 2px 2px 0",
-                borderRadius: i === 0 ? "6px 0 0 0" : i === 1 ? "0 6px 0 0" : i === 2 ? "0 0 0 6px" : "0 0 6px 0",
+                borderRadius: i === 0 ? "5px 0 0 0" : i === 1 ? "0 5px 0 0" : i === 2 ? "0 0 0 5px" : "0 0 5px 0",
               }}
             />
           ))}
@@ -150,8 +169,8 @@ export function AuthScanPanel({
 
         {/* Progress bar */}
         {isScanning && (
-          <div className="px-4 py-3" style={{ borderTop: "1px solid #F1F5F9" }}>
-            <div className="flex justify-between mb-1.5">
+          <div className="px-4 py-2" style={{ borderTop: "1px solid #F1F5F9" }}>
+            <div className="flex justify-between mb-1">
               <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.58rem" }}>Progres Langkah</p>
               <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.58rem", fontWeight: 700 }}>{progress}/{total}</p>
             </div>
@@ -170,118 +189,189 @@ export function AuthScanPanel({
       {/* Diagnostics grid (Hanya muncul jika Mode Pengembang Aktif) */}
       {isDevMode && (
         <div
-          className="rounded-2xl p-4 flex flex-col gap-3"
-          style={{ background: "#FFFFFF", border: "1px solid #E2E8F0", boxShadow: "0 1px 6px rgba(30,41,59,0.04)" }}
+          className="rounded-2xl p-4 flex flex-col gap-3.5"
+          style={{ background: "#FFFFFF", border: "1px solid #CBD5E1", boxShadow: "0 2px 10px rgba(30,41,59,0.06)" }}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <Activity size={14} style={{ color: "#D97706" }} />
-              <p style={{ color: "#D97706", fontFamily: MONO, fontSize: "0.58rem", letterSpacing: "0.14em", textTransform: "uppercase", fontWeight: 700 }}>
-                Data Diagnostik Edge AI (Dev Mode)
+              <Activity size={15} style={{ color: "#2563EB" }} />
+              <p style={{ color: "#0F172A", fontFamily: SANS, fontSize: "0.75rem", fontWeight: 700 }}>
+                Telemetri Real-Time Edge AI (Autentikasi)
               </p>
             </div>
-            <span className="px-1.5 py-0.5 rounded text-[0.52rem] font-bold" style={{ background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", fontFamily: MONO }}>
-              100 HZ · REAL-TIME
+            <span className="px-2 py-0.5 rounded text-[0.52rem] font-bold" style={{ background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE", fontFamily: MONO }}>
+              20 HZ · REAL-TIME BLE
             </span>
           </div>
 
-          {/* Sinyal Kinematika Real-Time Waveform */}
+          {/* Sinyal Kinematika Real-Time Waveform (Dual-Axis) */}
           <LiveSignalGraph
             isScanning={isScanning}
-            isZUPTValid={telemetry?.isZUPTValid ?? true}
-            mean={telemetry?.mean || 0.42}
-            variance={telemetry?.variance || 1.15}
-            stdDev={telemetry?.stdDev || 1.07}
-            kurtosis={telemetry?.kurtosis || 2.8}
-            sampleRate={100}
-            height={130}
+            isZUPTValid={telemetry?.isZUPTValid ?? false}
+            liveSample={liveSample}
+            mean={telemetry?.mean || 0}
+            variance={telemetry?.variance || 0}
+            stdDev={telemetry?.stdDev || 0}
+            kurtosis={telemetry?.kurtosis || 0}
+            sampleRate={20}
+            height={190}
           />
 
-          {/* Matriks Parameter Ilmiah */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              {
-                label: "Skor Keyakinan (CIR)",
-                value: isScanning ? (telemetry?.confidenceScore ? `${telemetry.confidenceScore.toFixed(1)}%` : diagScore) : "—",
-                sub: "Ambang Min: 80.0%",
-                color: isScanning ? ((telemetry?.confidenceScore ?? parseFloat(diagScore)) >= 80.0 ? "#16A34A" : "#DC2626") : "#CBD5E1",
-              },
-              {
-                label: "Log-Likelihood (αt)",
-                value: isScanning ? (telemetry?.logLikelihood ? telemetry.logLikelihood.toFixed(2) : "-142.10") : "—",
-                sub: "Forward GHMM",
-                color: isScanning ? "#2563EB" : "#CBD5E1",
-              },
-              {
-                label: "Ambang Dinamis (Th)",
-                value: isScanning ? (telemetry?.adaptiveThreshold ? telemetry.adaptiveThreshold.toFixed(2) : "-150.00") : "—",
-                sub: "Peak Tracking (1.15x)",
-                color: isScanning ? "#D97706" : "#CBD5E1",
-              },
-              {
-                label: "Status Gerak ZUPT",
-                value: isScanning ? (telemetry?.isZUPTValid ? "VALID (MELANGKAH)" : "DIAM / NOISE") : "—",
-                sub: "Uji Energi 0.85",
-                color: isScanning ? (telemetry?.isZUPTValid ? "#16A34A" : "#F59E0B") : "#CBD5E1",
-              },
-            ].map(({ label, value, sub, color }) => (
-              <div
-                key={label}
-                className="rounded-xl p-2.5"
-                style={{ background: "#F8FAFC", border: "1px solid #F1F5F9" }}
-              >
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.52rem", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-                  {label}
+          {/* KELOMPOK 1: INFERENSI & KEPUTUSAN GHMM */}
+          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Cpu size={13} className="text-blue-600" />
+              <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
+                1. Inferensi GHMM & Evaluasi Keputusan
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Skor Keyakinan (CIR)
                 </p>
-                <p className="mt-1" style={{ color, fontFamily: MONO, fontSize: "0.72rem", fontWeight: 700 }}>
-                  {value}
+                <p style={{ color: isScanning ? ((telemetry?.confidenceScore ?? parseFloat(diagScore)) >= 80.0 ? "#16A34A" : "#DC2626") : "#94A3B8", fontFamily: MONO, fontSize: "0.92rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning ? (telemetry?.confidenceScore ? `${telemetry.confidenceScore.toFixed(1)}%` : `${diagScore}%`) : "—"}
                 </p>
-                <p className="mt-0.5" style={{ color: "#CBD5E1", fontFamily: MONO, fontSize: "0.50rem" }}>
-                  {sub}
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  {isScanning ? ((telemetry?.confidenceScore ?? parseFloat(diagScore)) >= 80.0 ? "Lolos Ambang (≥80.0%)" : "Ditolak (<80.0%)") : "Ambang Min: 80.0%"}
                 </p>
               </div>
-            ))}
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Log-Likelihood (ln αT)
+                </p>
+                <p style={{ color: isScanning ? "#2563EB" : "#94A3B8", fontFamily: MONO, fontSize: "0.92rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning ? (progress > 0 && telemetry?.logLikelihood ? telemetry.logLikelihood.toFixed(2) : "Menghitung...") : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  Forward Algorithm GHMM
+                </p>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Ambang Dinamis (Th)
+                </p>
+                <p style={{ color: isScanning ? "#D97706" : "#94A3B8", fontFamily: MONO, fontSize: "0.92rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning ? (progress > 0 && telemetry?.adaptiveThreshold ? telemetry.adaptiveThreshold.toFixed(2) : "—") : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  Peak Tracking (Margin 1.15x)
+                </p>
+              </div>
+            </div>
           </div>
 
-          {/* 5 Fitur Statistik Domain Waktu */}
-          <div className="rounded-xl p-3 bg-slate-50/80 border border-slate-100">
+          {/* KELOMPOK 2: VEKTOR CIRI 5-FITUR (FEATURE EXTRACTION) */}
+          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
             <div className="flex items-center justify-between mb-2">
-              <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem", fontWeight: 700, textTransform: "uppercase" }}>
-                5 Fitur Statistik Domain Waktu (Jendela 3 Detik)
-              </p>
-              <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.50rem" }}>
-                N = 300 SAMPEL
-              </p>
+              <div className="flex items-center gap-1.5">
+                <Layers size={13} className="text-emerald-600" />
+                <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
+                  2. Vektor Ciri 5-Fitur Biometrik (Jendela 1.5s)
+                </p>
+              </div>
+              <span style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.50rem" }}>
+                N = 150 SAMPEL
+              </span>
             </div>
-            <div className="grid grid-cols-5 gap-1.5 text-center">
-              {[
-                { name: "Rata-Rata (μ)", val: telemetry?.mean ? telemetry.mean.toFixed(3) : "0.428" },
-                { name: "Variansi (σ²)", val: telemetry?.variance ? telemetry.variance.toFixed(3) : "1.152" },
-                { name: "Std Dev (s)", val: telemetry?.stdDev ? telemetry.stdDev.toFixed(3) : "1.073" },
-                { name: "Kemiringan", val: telemetry?.skewness ? telemetry.skewness.toFixed(3) : "-0.142" },
-                { name: "Keruncingan", val: telemetry?.kurtosis ? telemetry.kurtosis.toFixed(3) : "2.845" },
-              ].map(({ name, val }) => (
-                <div key={name} className="bg-white rounded-lg p-1.5 border border-slate-200/60 shadow-2xs">
-                  <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem" }}>{name}</p>
-                  <p style={{ color: isScanning ? "#1E293B" : "#94A3B8", fontFamily: MONO, fontSize: "0.62rem", fontWeight: 700, marginTop: 2 }}>
-                    {isScanning ? val : "—"}
-                  </p>
-                </div>
-              ))}
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-left">
+              <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Mean (μ)</p>
+                <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning && progress > 0 && telemetry?.mean ? `${telemetry.mean.toFixed(3)}g` : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Tenaga Ayunan</p>
+              </div>
+
+              <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Variansi (σ²)</p>
+                <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning && progress > 0 && telemetry?.variance ? telemetry.variance.toFixed(3) : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Sebaran Tenaga</p>
+              </div>
+
+              <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Std Dev (σ)</p>
+                <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning && progress > 0 && telemetry?.stdDev ? `${telemetry.stdDev.toFixed(3)}g` : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Konsistensi Irama</p>
+              </div>
+
+              <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Skewness (γ1)</p>
+                <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning && progress > 0 && telemetry?.skewness !== undefined ? telemetry.skewness.toFixed(3) : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Asimetri Ayunan</p>
+              </div>
+
+              <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs col-span-2 sm:col-span-1">
+                <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Kurtosis (β2)</p>
+                <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning && progress > 0 && telemetry?.kurtosis ? telemetry.kurtosis.toFixed(3) : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Heel-Strike Peak</p>
+              </div>
             </div>
           </div>
 
-          {/* Footer Baris Status Pembelajaran Adaptif */}
-          <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[0.58rem]">
-            <span style={{ color: "#64748B", fontFamily: MONO }}>
-              Adaptasi Model (EMA Δμ):{" "}
-              <strong style={{ color: isScanning ? "#16A34A" : "#94A3B8" }}>
-                {isScanning ? (telemetry?.emaDelta !== undefined ? `${telemetry.emaDelta >= 0 ? "+" : ""}${telemetry.emaDelta.toFixed(3)}` : `DIPERBARUI ${diagDelta}`) : "—"}
-              </strong>
-            </span>
-            <span style={{ color: "#94A3B8", fontFamily: MONO }}>
-              Kovariansi: {isScanning ? diagCov : "—"}
-            </span>
+          {/* KELOMPOK 3: ORIENTASI SAKU & ADAPTASI MODEL */}
+          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Compass size={13} className="text-amber-600" />
+              <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
+                3. Orientasi Saku & Adaptasi Model (EMA)
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Kalibrasi Saku (0.5s)
+                </p>
+                <p style={{ color: isScanning ? "#16A34A" : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning ? (telemetry?.zupt?.includes("Menyelaraskan") ? "MENYELARASKAN..." : "TERKUNCI OTOMATIS") : "SIAGA"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  Sudut Roll (φ) & Pitch (θ)
+                </p>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Pembaruan Inkremental (Δ EMA)
+                </p>
+                <p style={{ color: isScanning && (telemetry?.confidenceScore ?? parseFloat(diagScore)) >= 90.0 ? "#059669" : "#64748B", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning
+                    ? (telemetry?.emaDelta !== undefined ? `${telemetry.emaDelta >= 0 ? "+" : ""}${telemetry.emaDelta.toFixed(3)}` : `Δ ${diagDelta}`)
+                    : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  Aktif jika Skor CIR ≥ 90%
+                </p>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
+                  Status Gerak ZUPT
+                </p>
+                <p style={{ color: isScanning ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "#16A34A" : "#D97706") : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  {isScanning
+                    ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "● MELANGKAH" : "○ DIAM / STATIS")
+                    : "—"}
+                </p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
+                  Rotasi Gyro &gt; 0.85 (rad/s)²
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -8,9 +8,9 @@
 // ==========================================
 constexpr float IMU_SAMPLE_RATE_HZ   = 100.0f;                       // Frekuensi sampling sensor IMU
 constexpr uint32_t IMU_SAMPLE_INTERVAL_MS = 10;                     // 100 Hz = 10 ms
-constexpr uint16_t WINDOW_SIZE       = 300;                          // 3 detik x 100 Hz (Spesifikasi 3)
-constexpr uint8_t  TARGET_WINDOWS    = 10;                           // Syarat kuota 10 jendela valid
-constexpr uint32_t CALIBRATION_DURATION_MS = 5000;                  // 5 detik Online Calibration awal
+constexpr uint16_t WINDOW_SIZE       = 150;                          // 1.5 detik x 100 Hz (Responsif UX Capstone)
+constexpr uint8_t  TARGET_WINDOWS    = 5;                            // Syarat kuota 5 jendela valid (~7.5 detik total)
+constexpr uint32_t CALIBRATION_DURATION_MS = 500;                   // 500 ms (0.5 detik) Online Calibration awal otomatis
 
 // ==========================================
 // 2. PARAMETER ZUPT & PENAPISAN STATISTIK
@@ -37,6 +37,7 @@ constexpr float   CONFIDENCE_HIGH_THRESHOLD = 80.0f;                 // Ambang b
 #define BLE_CHAR_RX_CMD_UUID        "19B10001-E8F2-537E-4F6C-D104768A1214"  // Terima trigger dari Mobile App
 #define BLE_CHAR_TX_TELEMETRY_UUID  "19B10002-E8F2-537E-4F6C-D104768A1214"  // Kirim data metrik ke Mobile App
 #define BLE_CHAR_TX_DOOR_UUID       "19B10003-E8F2-537E-4F6C-D104768A1214"  // Kirim perintah akses ke ESP32
+#define BLE_CHAR_TX_LIVE_UUID       "19B10004-E8F2-537E-4F6C-D104768A1214"  // Kirim live waveform sample 20 Hz (Pure Real Data)
 
 // ==========================================
 // 5. ENUMERASI STATE MACHINE PROGRAM (FSM)
@@ -66,13 +67,23 @@ struct UserModel {
 // Disalurkan via BLE untuk Live Debugging & CSV HP
 // ==========================================
 struct __attribute__((packed)) TelemetryData {
-    uint8_t  windowIndex;       // Indeks jendela berjalan (1/10 s.d. 10/10)
+    uint8_t  windowIndex;       // Indeks jendela berjalan (1/5 s.d. 5/5)
     uint8_t  isZUPTValid;       // 1 = Gerak melangkah valid, 0 = Diam/Noise
     float    confidenceScore;   // Skor keyakinan persentase (0.0% - 100.0%)
     float    logLikelihood;     // Akumulasi log-likelihood Forward GHMM
     float    features[5];       // Nilai aktual: Mean, Var, Std, Skew, Kurt
     float    adaptiveThreshold; // Nilai ambang dinamis dari Peak Tracking
     float    emaDelta;          // Besaran koreksi pembaruan inkremental
+};
+
+// ==========================================
+// 8. STRUKTUR DATA LIVE SAMPLE 20 HZ
+// Disalurkan via BLE untuk Osiloskop Real-Time Fisik
+// ==========================================
+struct __attribute__((packed)) LiveSampleData {
+    float    liveVal;    // Akselerasi dinamis real-time (g)
+    float    energy;     // Energi kinematika sesaat
+    uint8_t  isMoving;   // 1 = Gerak aktif (ZUPT live), 0 = Diam/Statis
 };
 
 #endif // CONFIG_H

@@ -11,16 +11,18 @@ private:
     BLECharacteristic rxCmdChar;
     BLECharacteristic txTelemetryChar;
     BLECharacteristic txDoorChar;
+    BLECharacteristic txLiveChar;
 
-    char lastReceivedCommand[32];
+    char lastReceivedCommand[64];
     bool newCommandAvailable;
 
 public:
     BLEHandler() 
         : gaitService(BLE_SERVICE_UUID),
-          rxCmdChar(BLE_CHAR_RX_CMD_UUID, BLEWrite | BLEWriteWithoutResponse, 32),
+          rxCmdChar(BLE_CHAR_RX_CMD_UUID, BLEWrite | BLEWriteWithoutResponse, 64),
           txTelemetryChar(BLE_CHAR_TX_TELEMETRY_UUID, BLERead | BLENotify, sizeof(TelemetryData)),
-          txDoorChar(BLE_CHAR_TX_DOOR_UUID, BLERead | BLENotify, 32),
+          txDoorChar(BLE_CHAR_TX_DOOR_UUID, BLERead | BLENotify, 64),
+          txLiveChar(BLE_CHAR_TX_LIVE_UUID, BLERead | BLENotify, sizeof(LiveSampleData)),
           newCommandAvailable(false) {
         memset(lastReceivedCommand, 0, sizeof(lastReceivedCommand));
     }
@@ -39,6 +41,7 @@ public:
         gaitService.addCharacteristic(rxCmdChar);
         gaitService.addCharacteristic(txTelemetryChar);
         gaitService.addCharacteristic(txDoorChar);
+        gaitService.addCharacteristic(txLiveChar);
 
         BLE.addService(gaitService);
         BLE.advertise();
@@ -53,7 +56,7 @@ public:
         // Cek apakah ada string perintah masuk dari Mobile App
         if (rxCmdChar.written()) {
             int len = rxCmdChar.valueLength();
-            if (len > 0 && len < 32) {
+            if (len > 0 && len < 64) {
                 memcpy(lastReceivedCommand, rxCmdChar.value(), len);
                 lastReceivedCommand[len] = '\0';
                 newCommandAvailable = true;
@@ -72,10 +75,17 @@ public:
         return false;
     }
 
-    // Mengirim struct telemetri berkala (per jendela 3 detik) ke Mobile App
+    // Mengirim struct telemetri berkala (per jendela 1.5 detik) ke Mobile App
     void sendTelemetry(const TelemetryData &data) {
         if (BLE.connected()) {
             txTelemetryChar.writeValue((const uint8_t *)&data, sizeof(TelemetryData));
+        }
+    }
+
+    // Mengirim sampel gelombang real-time 20 Hz ke Mobile App (Pure Real Data)
+    void sendLiveSample(const LiveSampleData &data) {
+        if (BLE.connected()) {
+            txLiveChar.writeValue((const uint8_t *)&data, sizeof(LiveSampleData));
         }
     }
 

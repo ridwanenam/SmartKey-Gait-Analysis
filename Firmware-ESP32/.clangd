@@ -1,0 +1,10 @@
+CompileFlags:
+  Add:
+    - -IC:/Users/Pratama/.platformio/packages/framework-arduinoespressif32/libraries/BLE/src
+  Remove: 
+    - -mlongcalls
+    - -fno-tree-switch-conversion
+    - -mfix-esp32-psram-cache-issue
+    - -fstrict-volatile-bitfields
+    - -Wno-frame-address
+    - -fno-jump-tables
