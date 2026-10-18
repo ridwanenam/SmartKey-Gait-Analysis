@@ -159,6 +159,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     status: string;
   }>>([]);
   const latestAuthScoresRef = useRef<Array<{ slot: number; score: number }>>([]);
+  const latestTelemetryRef = useRef<BLETelemetry>(defaultBLEData.telemetry);
 
   const setActiveSession = useCallback((info: { mode: "auth" | "training" | null; slot: number; name: string }) => {
     activeSessionInfo.current = info;
@@ -228,6 +229,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     sessionLogged.current = false;
     verifiedUserNameRef.current = null;
     latestAuthScoresRef.current = [];
+    latestTelemetryRef.current = defaultBLEData.telemetry;
     setVerifiedUserName(null);
     currentSessionSteps.current = [];
   }, []);
@@ -237,6 +239,74 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     setDeviceId(null);
     addLog({ type: "system", status: "Info", message: "Terputus dari Smart Key" });
   }, [addLog]);
+
+  const logAuthSession = useCallback((decision: "SUCCESS" | "FAILED", userName?: string) => {
+    if (sessionLogged.current || activeSessionInfo.current.mode !== "auth") return;
+    sessionLogged.current = true;
+
+    const timestamp = formatLogTimestamp();
+    const durationSec = sessionStartTime.current > 0
+      ? parseFloat(((Date.now() - sessionStartTime.current) / 1000).toFixed(1))
+      : 7.5;
+    const t = latestTelemetryRef.current;
+
+    // Prioritaskan skor kandidat tertinggi dari paket SCORES agar konsisten dengan rincian kandidat 1-vs-All
+    const maxCandidateScore = latestAuthScoresRef.current.length > 0
+      ? Math.max(...latestAuthScoresRef.current.map(s => s.score))
+      : (t.confidenceScore || 0);
+    const scoreVal = maxCandidateScore;
+    const scoreStr = `${scoreVal.toFixed(1)}%`;
+    const deltaStr = (t.emaDelta !== undefined && t.emaDelta >= 0 ? "+" : "") + (t.emaDelta || 0).toFixed(2);
+
+    const resolvedUser = decision === "SUCCESS"
+      ? (userName || verifiedUserNameRef.current || "User")
+      : "Unknown / Rejected";
+
+    const finalDetails = JSON.stringify({
+      version: 2,
+      mode: "auth",
+      targetUser: resolvedUser,
+      scoresBreakdown: latestAuthScoresRef.current,
+      summary: {
+        totalWindows: Math.max(lastProgress.current || 5, currentSessionSteps.current.length, 5),
+        confidenceScore: parseFloat(scoreVal.toFixed(1)),
+        logLikelihood: parseFloat((t.logLikelihood || -150.0).toFixed(2)),
+        mean: parseFloat((t.mean || 0).toFixed(3)),
+        variance: parseFloat((t.variance || 0).toFixed(3)),
+        stdDev: parseFloat((t.stdDev || 0).toFixed(3)),
+        skewness: parseFloat((t.skewness || 0).toFixed(3)),
+        kurtosis: parseFloat((t.kurtosis || 0).toFixed(3)),
+        adaptiveThreshold: parseFloat((t.adaptiveThreshold || 0).toFixed(2)),
+        emaDelta: parseFloat((t.emaDelta || 0).toFixed(3)),
+        durationSec,
+        sampleRate: "100 Hz IMU / 20 Hz Live",
+      },
+      steps: currentSessionSteps.current,
+      waveform: currentSessionWaveform.current,
+    });
+
+    if (decision === "SUCCESS") {
+      databaseService.addAuthLog({
+        timestamp,
+        userId: resolvedUser,
+        score: scoreStr,
+        status: "SUCCESS",
+        incremental: `Adaptive (${deltaStr})`,
+        message: `Verifikasi Gait Berhasil (${resolvedUser}) - Akses Terbuka`,
+        details: finalDetails,
+      }).catch(console.error);
+    } else {
+      databaseService.addAuthLog({
+        timestamp,
+        userId: "Unknown / Rejected",
+        score: scoreStr,
+        status: "FAILED",
+        incremental: "Rejected",
+        message: "Pola Gait Tidak Sesuai Ambang CIR 80%",
+        details: finalDetails,
+      }).catch(console.error);
+    }
+  }, []);
 
   const handleDoorNotification = useCallback((value: DataView) => {
     try {
@@ -266,10 +336,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         if (cleanName) {
           verifiedUserNameRef.current = cleanName;
           setVerifiedUserName(cleanName);
-          databaseService.updateLatestAuthLogUser(
-            cleanName,
-            `Verifikasi Gait Berhasil (${cleanName}) - Akses Terbuka`
-          ).catch(console.error);
         } else if (name === "PIN_BYPASS") {
           verifiedUserNameRef.current = "PIN_BYPASS";
           setVerifiedUserName("PIN_BYPASS");
@@ -280,9 +346,19 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         } else {
           addLog({ type: "system", status: "Success", message: `Akses Diterima: Identitas ${cleanName || name} Terverifikasi!` });
         }
+
+        // Catat langsung hasil autentikasi sukses ke database SQLite
+        if (activeSessionInfo.current.mode === "auth" && !sessionLogged.current) {
+          logAuthSession("SUCCESS", cleanName || (name !== "PIN_BYPASS" ? name : "PIN Bypass"));
+        }
       } else if (text === "ACCESS_DENIED") {
         setBleData(prev => ({ ...prev, authStatus: "failed" }));
         addLog({ type: "system", status: "Failed", message: "Akses Ditolak: Pola Gait Tidak Cocok" });
+
+        // Catat langsung hasil autentikasi ditolak ke database SQLite
+        if (activeSessionInfo.current.mode === "auth" && !sessionLogged.current) {
+          logAuthSession("FAILED");
+        }
       } else if (text === "CLOSE_DOOR") {
         addLog({ type: "system", status: "Info", message: "Pintu Terkunci (CLOSE_DOOR)" });
       } else if (text.startsWith("TRAIN_SUCCESS")) {
@@ -292,7 +368,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         setBleData(prev => ({ ...prev, progress: 5, authStatus: "success" }));
         addLog({ type: "reg", status: "Success", message: `Pendaftaran Model (${trainedName}) Selesai di Edge RP2040` });
         databaseService.saveUserProfile(trainedSlot, trainedName).catch(console.error);
-        databaseService.ensureRegLogForSlot(trainedSlot, trainedName).catch(console.error);
         setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
       } else if (text.startsWith("DEL_SUCCESS")) {
         const parts = text.split(":");
@@ -479,43 +554,43 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         }
       };
 
+      latestTelemetryRef.current = newBleData.telemetry;
       setBleData(newBleData);
 
       // Simpan ke Log SQLite saat sesi selesai (5/5)
       if (displayProgress >= 5 && !sessionLogged.current) {
-        sessionLogged.current = true;
-        const durationSec = sessionStartTime.current > 0
-          ? parseFloat(((Date.now() - sessionStartTime.current) / 1000).toFixed(1))
-          : 7.5;
-
         const sessionMode = activeSessionInfo.current.mode;
-        const targetSlot = activeSessionInfo.current.slot;
-        const targetName = activeSessionInfo.current.name || `User ${targetSlot + 1}`;
-
-        const finalDetails = JSON.stringify({
-          version: 2,
-          mode: sessionMode,
-          targetUser: targetName,
-          scoresBreakdown: sessionMode === "auth" ? latestAuthScoresRef.current : undefined,
-          summary: {
-            totalWindows: displayProgress,
-            confidenceScore: parseFloat(confidenceScore.toFixed(1)),
-            logLikelihood: parseFloat(logLikelihood.toFixed(2)),
-            mean: parseFloat(mean.toFixed(3)),
-            variance: parseFloat(variance.toFixed(3)),
-            stdDev: parseFloat(stdDev.toFixed(3)),
-            skewness: parseFloat(skewness.toFixed(3)),
-            kurtosis: parseFloat(kurtosis.toFixed(3)),
-            adaptiveThreshold: parseFloat(adaptiveThreshold.toFixed(2)),
-            emaDelta: parseFloat(emaDelta.toFixed(3)),
-            durationSec,
-            sampleRate: "100 Hz IMU / 20 Hz Live",
-          },
-          steps: currentSessionSteps.current,
-          waveform: currentSessionWaveform.current,
-        });
-
         if (sessionMode === "training") {
+          sessionLogged.current = true;
+          const durationSec = sessionStartTime.current > 0
+            ? parseFloat(((Date.now() - sessionStartTime.current) / 1000).toFixed(1))
+            : 7.5;
+
+          const targetSlot = activeSessionInfo.current.slot;
+          const targetName = activeSessionInfo.current.name || `User ${targetSlot + 1}`;
+
+          const finalDetails = JSON.stringify({
+            version: 2,
+            mode: "training",
+            targetUser: targetName,
+            summary: {
+              totalWindows: displayProgress,
+              confidenceScore: parseFloat(confidenceScore.toFixed(1)),
+              logLikelihood: parseFloat(logLikelihood.toFixed(2)),
+              mean: parseFloat(mean.toFixed(3)),
+              variance: parseFloat(variance.toFixed(3)),
+              stdDev: parseFloat(stdDev.toFixed(3)),
+              skewness: parseFloat(skewness.toFixed(3)),
+              kurtosis: parseFloat(kurtosis.toFixed(3)),
+              adaptiveThreshold: parseFloat(adaptiveThreshold.toFixed(2)),
+              emaDelta: parseFloat(emaDelta.toFixed(3)),
+              durationSec,
+              sampleRate: "100 Hz IMU / 20 Hz Live",
+            },
+            steps: currentSessionSteps.current,
+            waveform: currentSessionWaveform.current,
+          });
+
           databaseService.addRegLog({
             timestamp,
             slotUser: `Slot ${targetSlot + 1} (${targetName})`,
@@ -528,55 +603,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
           databaseService.saveUserProfile(targetSlot, targetName).then(() => {
             setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
           }).catch(console.error);
-        } else {
-          let detectedUser = verifiedUserNameRef.current || verifiedUserName;
-          if (confidenceScore >= 80.0) {
-            if (!detectedUser || detectedUser === "Owner") {
-              databaseService.getUserProfiles().then((profiles) => {
-                let resolvedName = detectedUser;
-                if (!resolvedName || resolvedName === "Owner") {
-                  if (profiles.length === 1) {
-                    resolvedName = profiles[0].name;
-                  } else if (targetName && targetName !== "Owner") {
-                    resolvedName = targetName;
-                  } else if (profiles.length > 0) {
-                    resolvedName = profiles[0].name;
-                  } else {
-                    resolvedName = "User 1";
-                  }
-                }
-                databaseService.addAuthLog({
-                  timestamp,
-                  userId: resolvedName,
-                  score: scoreStr,
-                  status: "SUCCESS",
-                  incremental: `Adaptive (${deltaStr})`,
-                  message: `Verifikasi Gait Berhasil (${resolvedName}) - Akses Terbuka`,
-                  details: finalDetails,
-                }).catch(console.error);
-              }).catch(console.error);
-            } else {
-              databaseService.addAuthLog({
-                timestamp,
-                userId: detectedUser,
-                score: scoreStr,
-                status: "SUCCESS",
-                incremental: `Adaptive (${deltaStr})`,
-                message: `Verifikasi Gait Berhasil (${detectedUser}) - Akses Terbuka`,
-                details: finalDetails,
-              }).catch(console.error);
+        } else if (sessionMode === "auth") {
+          // Mode autentikasi: beri toleransi 450ms bagi paket SCORES & OPEN_DOOR/ACCESS_DENIED dari RP2040 agar rincian tercatat lengkap
+          setTimeout(() => {
+            if (!sessionLogged.current && activeSessionInfo.current.mode === "auth") {
+              logAuthSession(confidenceScore >= 80.0 ? "SUCCESS" : "FAILED");
             }
-          } else {
-            databaseService.addAuthLog({
-              timestamp,
-              userId: "Unknown / Rejected",
-              score: scoreStr,
-              status: "FAILED",
-              incremental: "Rejected",
-              message: "Pola Gait Tidak Sesuai Ambang CIR 80%",
-              details: finalDetails,
-            }).catch(console.error);
-          }
+          }, 450);
         }
       }
     } catch (err) {

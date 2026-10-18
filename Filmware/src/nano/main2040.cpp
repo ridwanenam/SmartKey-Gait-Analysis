@@ -378,6 +378,11 @@ void processTrainingState(float gx, float gy, float gz) {
 
             // Evaluasi Kuota Jendela Valid
             if (validWindowCounter >= TARGET_WINDOWS) {
+                // Kirim telemetri jendela ke-5 terlebih dahulu sebelum proses komputasi & event sukses
+                ble.sendTelemetry(telem);
+                featureExtractor.resetBuffer();
+                delay(50);
+
                 // Eksekusi Komputasi Awal Model GHMM untuk target user
                 ghmm[currentSlotTarget].trainInitialModel(activeUsers[currentSlotTarget], trainingFeaturesBuffer, targetUserName);
                 bool saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
@@ -396,17 +401,18 @@ void processTrainingState(float gx, float gy, float gz) {
                 snprintf(trainSuccessMsg, sizeof(trainSuccessMsg), "TRAIN_SUCCESS:%d:%s", currentSlotTarget, activeUsers[currentSlotTarget].userName);
                 ble.sendDoorCommand(trainSuccessMsg);
                 currentState = STATE_IDLE;
+            } else {
+                ble.sendTelemetry(telem);
+                featureExtractor.resetBuffer();
             }
         } else {
             // Jika diam/noise, pertahankan progres hitungan langkah yang sudah valid
             telem.windowIndex = validWindowCounter;
             telem.confidenceScore = (float)validWindowCounter * (100.0f / (float)TARGET_WINDOWS);
             Serial.println(F("[ZUPT] Gerak Tidak Valid/Diam. Jendela Dibuang."));
+            ble.sendTelemetry(telem);
+            featureExtractor.resetBuffer();
         }
-
-        // Kirim telemetri ke antarmuka aplikasi ponsel
-        ble.sendTelemetry(telem);
-        featureExtractor.resetBuffer();
     }
 }
 
@@ -421,6 +427,14 @@ void processAuthenticationState(float gx, float gy, float gz) {
         memset(&telem, 0, sizeof(TelemetryData));
         telem.isZUPTValid = isWalking ? 1 : 0;
 
+        int bestUserIdx = -1;
+        float bestConfidence = -1.0f;
+        float bestLogProb = -999.0f;
+        float userScores[MAX_USERS];
+        for (uint8_t i = 0; i < MAX_USERS; ++i) {
+            userScores[i] = -1.0f;
+        }
+
         if (isWalking) {
             float currentFeatures[NUM_FEATURES];
             featureExtractor.computeFeatures(currentFeatures);
@@ -433,14 +447,6 @@ void processAuthenticationState(float gx, float gy, float gz) {
             telem.windowIndex = validWindowCounter;
 
             // Evaluasi terhadap seluruh profil pemilik yang terdaftar (Multiclass 1-vs-All)
-            int bestUserIdx = -1;
-            float bestConfidence = -1.0f;
-            float bestLogProb = -999.0f;
-            float userScores[MAX_USERS];
-            for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                userScores[i] = -1.0f;
-            }
-
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
                 if (activeUsers[i].isRegistered) {
                     float logProb = ghmm[i].evaluateWindow(activeUsers[i], currentFeatures, validWindowCounter);
@@ -459,58 +465,22 @@ void processAuthenticationState(float gx, float gy, float gz) {
                 telem.confidenceScore = bestConfidence;
                 telem.adaptiveThreshold = ghmm[bestUserIdx].getAdaptiveThreshold();
 
-                // Evaluasi apakah akumulasi 5 jendela menembus syarat CIR >= 80%
-                if (validWindowCounter >= TARGET_WINDOWS) {
-                    // Kirim breakdown skor kemiripan seluruh slot yang terdaftar ke Mobile App
-                    char scoresMsg[64];
-                    int offset = snprintf(scoresMsg, sizeof(scoresMsg), "SCORES:");
-                    for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                        if (activeUsers[i].isRegistered && offset < (int)sizeof(scoresMsg) - 10) {
-                            offset += snprintf(scoresMsg + offset, sizeof(scoresMsg) - offset, "%d:%.1f|", i, userScores[i]);
-                        }
-                    }
-                    if (offset > 7 && scoresMsg[offset - 1] == '|') {
-                        scoresMsg[offset - 1] = '\0';
-                    }
-                    ble.sendDoorCommand(scoresMsg);
-                    delay(40);
-
-                    if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD) {
-                        Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
-                        Serial.println(activeUsers[bestUserIdx].userName);
-
-                        char doorMsg[32];
-                        snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
-                        ble.sendDoorCommand(doorMsg);
-
-                        // Eksekusi Incremental Personalization via formula EMA hanya jika sangat yakin (>= 90%)
-                        if (bestConfidence >= 90.0f) {
-                            float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
-                            telem.emaDelta = deltaEMA;
-                            // Perbarui data adaptif ke Flash memori internal
-                            StorageManager::saveUser(bestUserIdx, activeUsers[bestUserIdx]);
-                        } else {
-                            telem.emaDelta = 0.0f;
-                        }
-                    } else {
-                        Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));
-                        ble.sendDoorCommand("ACCESS_DENIED");
-                    }
-
-                    currentState = STATE_IDLE;
-                    validWindowCounter = 0;
+                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%)
+                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f) {
+                    float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
+                    telem.emaDelta = deltaEMA;
+                    // Perbarui data adaptif ke Flash memori internal
+                    StorageManager::saveUser(bestUserIdx, activeUsers[bestUserIdx]);
+                } else {
+                    telem.emaDelta = 0.0f;
                 }
             } else {
                 // Kasus jika belum ada profil pengguna terdaftar di memori Flash
                 Serial.println(F("[AUTH] Profil Pengguna Belum Terdaftar di Flash!"));
                 telem.confidenceScore = 0.0f;
                 telem.logLikelihood = -999.0f;
-
-                if (validWindowCounter >= TARGET_WINDOWS) {
-                    ble.sendDoorCommand("ACCESS_DENIED");
-                    currentState = STATE_IDLE;
-                    validWindowCounter = 0;
-                }
+                telem.adaptiveThreshold = 0.0f;
+                telem.emaDelta = 0.0f;
             }
         } else {
             // Gerak tidak valid / diam, pertahankan indeks akumulasi
@@ -518,8 +488,46 @@ void processAuthenticationState(float gx, float gy, float gz) {
             Serial.println(F("[ZUPT] Diam Terdeteksi -> Mengabaikan Jendela"));
         }
 
-        // Kirim data metrik diagnostik ke Mobile App untuk live plot & simpan CSV
+        // 1. KIRIM DATA TELEMETRI KE APLIKASI PONSEL TERLEBIH DAHULU (Pastikan Jendela #5 tercatat di aplikasi)
         ble.sendTelemetry(telem);
         featureExtractor.resetBuffer();
+
+        // 2. Evaluasi apakah akumulasi 5 jendela selesai
+        if (isWalking && validWindowCounter >= TARGET_WINDOWS) {
+            delay(50); // Beri ruang stack BLE mentransmisikan paket telemetri jendela ke-5 sebelum event pintu
+
+            if (bestUserIdx >= 0) {
+                // Kirim breakdown skor kemiripan seluruh slot yang terdaftar ke Mobile App
+                char scoresMsg[64];
+                int offset = snprintf(scoresMsg, sizeof(scoresMsg), "SCORES:");
+                for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                    if (activeUsers[i].isRegistered && offset < (int)sizeof(scoresMsg) - 10) {
+                        offset += snprintf(scoresMsg + offset, sizeof(scoresMsg) - offset, "%d:%.1f|", i, userScores[i]);
+                    }
+                }
+                if (offset > 7 && scoresMsg[offset - 1] == '|') {
+                    scoresMsg[offset - 1] = '\0';
+                }
+                ble.sendDoorCommand(scoresMsg);
+                delay(40);
+
+                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD) {
+                    Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
+                    Serial.println(activeUsers[bestUserIdx].userName);
+
+                    char doorMsg[32];
+                    snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
+                    ble.sendDoorCommand(doorMsg);
+                } else {
+                    Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));
+                    ble.sendDoorCommand("ACCESS_DENIED");
+                }
+            } else {
+                ble.sendDoorCommand("ACCESS_DENIED");
+            }
+
+            currentState = STATE_IDLE;
+            validWindowCounter = 0;
+        }
     }
 }

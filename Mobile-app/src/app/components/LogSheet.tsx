@@ -102,38 +102,23 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
     }
   }, [open, tab, flashSyncVersion, loadLogsFromSQLite]);
 
-  // Tombol Refresh: Cek Flash Memory RP2040 jika di tab registrasi & BLE online
+  // Tombol Refresh / Sync Flash: Sinkronisasi data slot dengan Flash RP2040 (hanya aktif di tab registrasi saat BLE terhubung)
   const handleRefresh = async () => {
+    if (tab !== "registrasi" || connectionState !== "connected" || isLoading || isSyncingFlash) return;
     setIsLoading(true);
+    setIsSyncingFlash(true);
     try {
-      if (tab === "registrasi") {
-        if (connectionState === "connected") {
-          setIsSyncingFlash(true);
-          await syncFlashUsers();
-          // Jeda agar BLE dan SQLite selesai sinkronisasi jika event FLASH_SYNC_DONE tertunda
-          setTimeout(async () => {
-            await loadLogsFromSQLite();
-            setIsSyncingFlash(false);
-            setIsLoading(false);
-          }, 800);
-          return;
-        } else {
-          addLog({
-            type: "system",
-            status: "Info",
-            message: "Smart Key offline. Memuat data registrasi tersimpan di SQLite lokal.",
-          });
-          await loadLogsFromSQLite();
-        }
-      } else {
+      await syncFlashUsers();
+      // Jeda agar BLE dan SQLite selesai sinkronisasi jika event FLASH_SYNC_DONE tertunda
+      setTimeout(async () => {
         await loadLogsFromSQLite();
-      }
+        setIsSyncingFlash(false);
+        setIsLoading(false);
+      }, 800);
     } catch (err) {
-      console.error("Gagal refresh:", err);
-    } finally {
-      if (tab !== "registrasi" || connectionState !== "connected") {
-        setTimeout(() => setIsLoading(false), 250);
-      }
+      console.error("Gagal sinkronisasi flash:", err);
+      setIsSyncingFlash(false);
+      setIsLoading(false);
     }
   };
 
@@ -375,16 +360,34 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
               {/* Actions Bar (Refresh, Hapus/Hapus Terpilih, Download CSV) */}
               <div className="px-5 py-2.5 flex items-center justify-between" style={{ borderBottom: "1px solid #EEF2F7" }}>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleRefresh}
-                    disabled={isLoading || isSyncingFlash}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-slate-700 hover:bg-slate-50 active:scale-95 text-[0.62rem] font-semibold cursor-pointer shadow-xs"
-                    style={{ background: "#FFFFFF", borderColor: "#CBD5E1", fontFamily: MONO }}
-                    title={tab === "registrasi" ? "Sinkronkan dengan Flash RP2040 & Database" : "Muat Ulang data dari SQLite"}
-                  >
-                    <RefreshCw size={12} className={(isLoading || isSyncingFlash) ? "animate-spin text-blue-600" : "text-slate-500"} />
-                    <span>{isSyncingFlash ? "Sync Flash..." : "Refresh"}</span>
-                  </button>
+                  {tab === "registrasi" && (
+                    <button
+                      onClick={handleRefresh}
+                      disabled={connectionState !== "connected" || isLoading || isSyncingFlash}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-slate-700 hover:bg-slate-50 active:scale-95 text-[0.62rem] font-semibold shadow-xs transition-all"
+                      style={{
+                        background: connectionState !== "connected" ? "#F8FAFC" : "#FFFFFF",
+                        borderColor: connectionState !== "connected" ? "#E2E8F0" : "#CBD5E1",
+                        color: connectionState !== "connected" ? "#94A3B8" : "#334155",
+                        opacity: connectionState !== "connected" ? 0.55 : 1,
+                        cursor: connectionState !== "connected" ? "not-allowed" : "pointer",
+                        fontFamily: MONO,
+                      }}
+                      title={connectionState !== "connected" ? "Smart Key offline (Hubungkan BLE untuk sinkronisasi Flash RP2040)" : "Sinkronkan slot profil pengguna dengan Flash RP2040"}
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={
+                          isLoading || isSyncingFlash
+                            ? "animate-spin text-emerald-600"
+                            : connectionState === "connected"
+                            ? "text-slate-500"
+                            : "text-slate-400"
+                        }
+                      />
+                      <span>{isSyncingFlash ? "Sync Flash..." : "Sync Flash"}</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={handleDeleteLogs}

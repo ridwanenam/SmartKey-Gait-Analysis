@@ -25,6 +25,8 @@ import {
   ChevronUp,
   RefreshCw,
   Users,
+  HardDrive,
+  Smartphone,
 } from "lucide-react";
 import { AuthLogRecord, RegLogRecord, databaseService, UserProfile } from "../services/databaseService";
 import { ExportService } from "../services/exportService";
@@ -135,38 +137,43 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       }
     }
 
-    // Jika log riwayat lama belum memiliki waveform raw points, sintesiskan gelombang realistis dari data langkahnya
-    if (waveform.length === 0 && steps.length > 0) {
-      steps.forEach((step, sIdx) => {
-        const stepMean = parseFloat(String(step.mean ?? "0.22"));
-        const stepVar = parseFloat(String(step.variance ?? "0.16"));
-        const stepStd = parseFloat(String(step.stdDev ?? Math.sqrt(Math.max(0.01, stepVar))));
-        const stepKurt = parseFloat(String(step.kurtosis ?? "2.8"));
-        const isStepValid = step.status !== "FAILED" && step.status !== "DISCARDED";
-
-        // Buat 30 titik per langkah (ekuivalen 1.5 detik @ 20 Hz)
-        const ptsPerStep = 30;
-        for (let i = 0; i < ptsPerStep; i++) {
-          const t = sIdx * 1.5 + (i * 1.5) / ptsPerStep;
-          const phase = (i / ptsPerStep) * Math.PI * 2 * 1.8;
-          const heelStrike = Math.pow(Math.sin(phase), 3) * Math.min(stepKurt, 3.5);
-          const swing = Math.sin(phase * 2) * 0.35;
-          const noise = (Math.sin(i * 13.7) * 0.5) * (stepStd * 0.2);
-          const val = isStepValid ? (heelStrike + swing + noise) * (stepMean + stepStd * 0.7) : (Math.sin(i) * 0.03);
-          const energy = isStepValid ? 0.95 + Math.sin(phase) * 0.45 : 0.05;
-
-          waveform.push({
-            t: parseFloat(t.toFixed(2)),
-            val: parseFloat(val.toFixed(3)),
-            energy: parseFloat(Math.max(0.01, energy).toFixed(3)),
-            isMoving: isStepValid,
-          });
-        }
-      });
-    }
-
     return { parsedDetails: steps, parsedWaveform: waveform, sessionSummary: summary, parsedScoresBreakdown: scoresBreakdown };
   }, [record]);
+
+  // Gelombang efektif: gunakan parsedWaveform jika ada titik riil 20 Hz (format V2),
+  // atau rekonstruksi gelombang dinamis dari parameter riil per jendela langkah (format V1)
+  const effectiveWaveform = useMemo<WaveformPoint[]>(() => {
+    if (parsedWaveform.length > 0) return parsedWaveform;
+
+    if (parsedDetails.length > 0) {
+      const points: WaveformPoint[] = [];
+      const windowDuration = 1.5; // durasi per jendela langkah (detik)
+      const sampleRateHz = 20;    // 20 titik sampel per detik
+      const pointsPerWindow = Math.round(windowDuration * sampleRateHz);
+
+      parsedDetails.forEach((stepItem, stepIdx) => {
+        const stepMean = parseFloat(String(stepItem.mean ?? "0.428")) || 0.4;
+        const stepVar = parseFloat(String(stepItem.variance ?? "1.152")) || 1.0;
+        const stepAmp = Math.sqrt(Math.max(0.08, stepVar)) * 0.82;
+        const baseTime = stepIdx * windowDuration;
+
+        for (let i = 0; i < pointsPerWindow; i++) {
+          const tRel = i / sampleRateHz;
+          const t = parseFloat((baseTime + tRel).toFixed(2));
+          const phase = (i / pointsPerWindow) * 2 * Math.PI;
+          const val = parseFloat((stepMean + stepAmp * Math.sin(phase) - (stepAmp * 0.22) * Math.sin(2 * phase)).toFixed(3));
+          const energy = parseFloat((Math.max(0.15, (stepVar * 1.6) * Math.abs(Math.sin(phase / 2)))).toFixed(3));
+          const isMoving = stepItem.zupt?.includes("Melangkah") || stepItem.zupt?.includes("VALID") || stepItem.status === "VALID";
+
+          points.push({ t, val, energy, isMoving });
+        }
+      });
+
+      return points;
+    }
+
+    return [];
+  }, [parsedWaveform, parsedDetails]);
 
   // Reset zoom & pan saat modal dibuka atau record berganti
   useEffect(() => {
@@ -181,6 +188,29 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     ? authRec?.status === "SUCCESS"
     : regRec?.statusAkhir === "SUCCESS";
 
+  // Deteksi apakah record registrasi ini merupakan profil yang HANYA disinkronkan dari Flash
+  // pada perangkat sekunder (tanpa riwayat telemetri langkah lokal sama sekali)
+  const isSyncedFromFlash = useMemo(() => {
+    // 1. Log autentikasi selalu dieksekusi secara lokal, bukan sync flash
+    if (isAuth) return false;
+
+    // 2. Jika memiliki data langkah telemetri lokal (>0) atau titik gelombang nyata (>0),
+    // maka perangkat ini ADALAH PERANGKAT PEREKAM ASLI!
+    if (parsedDetails.length > 0 || parsedWaveform.length > 0) {
+      return false;
+    }
+
+    // 3. Jika id diawali dengan prefix virtual sync flash
+    if (record?.id?.startsWith("flash_slot_")) return true;
+
+    // 4. Jika details kosong sama sekali dan tidak ada data langkah lokal
+    if (!record?.details || record.details.trim() === "" || record.details === "[]" || record.details === "{}") {
+      return true;
+    }
+
+    return false;
+  }, [isAuth, record, parsedDetails.length, parsedWaveform.length]);
+
   // Hitung parameter ringkasan agregat jika tidak tersedia di sessionSummary
   const summaryMetrics = useMemo(() => {
     if (sessionSummary) {
@@ -194,7 +224,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
         kurtosis: sessionSummary.kurtosis ?? "—",
         adaptiveThreshold: sessionSummary.adaptiveThreshold ?? "—",
         emaDelta: sessionSummary.emaDelta ?? "—",
-        durationSec: sessionSummary.durationSec ?? (parsedWaveform.length > 0 ? parsedWaveform[parsedWaveform.length - 1].t : 7.5),
+        durationSec: sessionSummary.durationSec ?? (effectiveWaveform.length > 0 ? effectiveWaveform[effectiveWaveform.length - 1].t : 7.5),
         sampleRate: sessionSummary.sampleRate ?? "100 Hz IMU / 20 Hz Live",
       };
     }
@@ -211,7 +241,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
         kurtosis: last.kurtosis ?? "—",
         adaptiveThreshold: last.adaptiveThreshold ?? "—",
         emaDelta: last.emaDelta ?? "—",
-        durationSec: parsedWaveform.length > 0 ? parsedWaveform[parsedWaveform.length - 1].t : parsedDetails.length * 1.5,
+        durationSec: effectiveWaveform.length > 0 ? effectiveWaveform[effectiveWaveform.length - 1].t : parsedDetails.length * 1.5,
         sampleRate: "100 Hz IMU / 20 Hz Live",
       };
     }
@@ -229,7 +259,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       durationSec: 7.5,
       sampleRate: "100 Hz IMU",
     };
-  }, [sessionSummary, parsedDetails, parsedWaveform, isAuth, authRec]);
+  }, [sessionSummary, parsedDetails, effectiveWaveform, isAuth, authRec]);
 
   // Komputasi Breakdown CIR untuk seluruh slot profil pengguna terdaftar
   const evaluatedSlots = useMemo(() => {
@@ -308,7 +338,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
   // Gambar Osiloskop Interaktif Dual-Axis (Sumbu Kiri = Accel 'g', Sumbu Kanan = Gyro '(rad/s)²')
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || parsedWaveform.length === 0) return;
+    if (!canvas || effectiveWaveform.length === 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -336,13 +366,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     ctx.fillRect(padLeft, padTop, plotW, plotH);
 
     // 2. Rentang Waktu yang Terlihat (Zoom & Pan)
-    const totalDuration = Math.max(1.5, parsedWaveform[parsedWaveform.length - 1].t);
+    const totalDuration = Math.max(1.5, effectiveWaveform[effectiveWaveform.length - 1].t);
     const visibleDuration = totalDuration / zoom;
     const maxStart = Math.max(0, totalDuration - visibleDuration);
     const startTime = maxStart * panOffset;
     const endTime = startTime + visibleDuration;
 
-    const visiblePoints = parsedWaveform.filter(
+    const visiblePoints = effectiveWaveform.filter(
       (p) => p.t >= startTime - 0.2 && p.t <= endTime + 0.2
     );
 
@@ -554,12 +584,12 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     }
 
     ctx.restore();
-  }, [parsedWaveform, zoom, panOffset, hoveredPoint, showGyro, showAccel]);
+  }, [effectiveWaveform, zoom, panOffset, hoveredPoint, showGyro, showAccel]);
 
   // Handler interaksi pointer/touch untuk scrubbing
   const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas || parsedWaveform.length === 0) return;
+    if (!canvas || effectiveWaveform.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const scaleX = canvas.width / rect.width;
@@ -574,7 +604,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       return;
     }
 
-    const totalDuration = Math.max(1.5, parsedWaveform[parsedWaveform.length - 1].t);
+    const totalDuration = Math.max(1.5, effectiveWaveform[effectiveWaveform.length - 1].t);
     const visibleDuration = totalDuration / zoom;
     const maxStart = Math.max(0, totalDuration - visibleDuration);
     const startTime = maxStart * panOffset;
@@ -582,13 +612,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     const clickRatio = (canvasX - padLeft) / plotW;
     const targetT = startTime + clickRatio * visibleDuration;
 
-    let closest = parsedWaveform[0];
+    let closest = effectiveWaveform[0];
     let minDiff = Math.abs(closest.t - targetT);
-    for (let i = 1; i < parsedWaveform.length; i++) {
-      const diff = Math.abs(parsedWaveform[i].t - targetT);
+    for (let i = 1; i < effectiveWaveform.length; i++) {
+      const diff = Math.abs(effectiveWaveform[i].t - targetT);
       if (diff < minDiff) {
         minDiff = diff;
-        closest = parsedWaveform[i];
+        closest = effectiveWaveform[i];
       }
     }
     setHoveredPoint(closest);
@@ -639,10 +669,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       csv += "\r\n";
     }
 
-    if (parsedWaveform.length > 0) {
-      csv += "=== TITIK SAMPEL GELOMBANG FISIK NYATA (20 HZ LIVE IMU) ===\r\n";
+    const exportWaveform = parsedWaveform.length > 0 ? parsedWaveform : effectiveWaveform;
+    if (exportWaveform.length > 0) {
+      csv += parsedWaveform.length > 0
+        ? "=== TITIK SAMPEL GELOMBANG FISIK NYATA (20 HZ LIVE IMU) ===\r\n"
+        : "=== TITIK SAMPEL GELOMBANG REKONSTRUKSI VEKTOR FITUR 5D (20 HZ) ===\r\n";
       csv += "Waktu_Detik,Akselerasi_Dinamis_g,Energi_Rotasi_Gyro_rad_s2,Fase_Gerak_ZUPT\r\n";
-      parsedWaveform.forEach((p) => {
+      exportWaveform.forEach((p) => {
         csv += `${p.t},${p.val},${p.energy},${p.isMoving ? "MELANGKAH" : "DIAM"}\r\n`;
       });
     }
@@ -705,10 +738,105 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
 
             {/* Content Scrollable */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* 1. OSILOSKOP DUAL-AXIS (AKSELERASI 'g' & ROTASI GYRO '(rad/s)²') */}
-              <div className="rounded-xl overflow-hidden border border-slate-700/60 shadow-md" style={{ background: "#0B1329" }}>
-                {/* Header Osiloskop & Kontrol Zoom */}
-                <div className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 bg-slate-900/90">
+              {isSyncedFromFlash ? (
+                <div className="space-y-3.5">
+                  {/* Kartu Status Model Flash RP2040 */}
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50/90 via-slate-50 to-indigo-50/70 border border-blue-200/90 shadow-2xs">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                          <HardDrive size={20} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.9rem" }}>
+                              {regRec?.slotUser || "Slot Profil Pengguna"}
+                            </h4>
+                            <span
+                              className="px-2 py-0.5 rounded-full text-[0.55rem] font-bold"
+                              style={{
+                                background: "#DCFCE7",
+                                color: "#15803D",
+                                border: "1px solid #BBF7D0",
+                                fontFamily: MONO,
+                              }}
+                            >
+                              ● AKTIF DI FLASH WEARABLE
+                            </span>
+                          </div>
+                          <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem", marginTop: 2 }}>
+                            Tersimpan Permanen di Chip Flash RP2040 (Mbed KVStore)
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3.5">
+                      <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-2xs">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                          Model Klasifikasi
+                        </p>
+                        <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
+                          GHMM MULTI-STATE
+                        </p>
+                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 1 }}>
+                          5 Emisi Gaussian Terlatih
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-2xs">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                          Kesiapan Autentikasi
+                        </p>
+                        <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
+                          SIAP DIGUNAKAN
+                        </p>
+                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 1 }}>
+                          Dapat Membuka Solenoid Pintu
+                        </p>
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-2xs">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                          Ukuran Memori Flash
+                        </p>
+                        <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
+                          ~340 BYTE / SLOT
+                        </p>
+                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 1 }}>
+                          Bobot Parameter Matematis
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notice Card: Detail Tersedia di Perangkat Perekam */}
+                  <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200 flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 mt-0.5 border border-amber-200">
+                      <Smartphone size={16} />
+                    </div>
+                    <div className="flex-1">
+                      <h5 style={{ color: "#78350F", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
+                        Detail Grafik Gelombang & Telemetri Lengkap Tersedia di Perangkat Perekam
+                      </h5>
+                      <p style={{ color: "#92400E", fontFamily: SANS, fontSize: "0.68rem", lineHeight: "1.4", marginTop: 4 }}>
+                        Slot pengguna ini disinkronkan langsung dari Flash memori perangkat Smart Key wearable. Untuk menjaga efisiensi transmisi BLE dan daya tahan memori Flash chip, ribuan titik gelombang 20 Hz dan rincian fitur 5D per jendela disimpan secara lokal di perangkat yang digunakan saat proses registrasi awal (Tablet / Ponsel perekam).
+                      </p>
+                      <div className="mt-3 p-2.5 rounded-xl bg-white/80 border border-amber-200/70 flex items-center gap-2">
+                        <CheckCircle2 size={13} className="text-amber-600 shrink-0" />
+                        <p style={{ color: "#78350F", fontFamily: MONO, fontSize: "0.58rem" }}>
+                          Perangkat ini tetap dapat melakukan autentikasi gait secara mandiri. Setiap sesi autentikasi baru yang dijalankan melalui perangkat ini akan merekam visualisasi gelombang dan telemetri lengkap secara lokal.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 1. OSILOSKOP DUAL-AXIS (AKSELERASI 'g' & ROTASI GYRO '(rad/s)²') */}
+                  <div className="rounded-xl overflow-hidden border border-slate-700/60 shadow-md" style={{ background: "#0B1329" }}>
+                    {/* Header Osiloskop & Kontrol Zoom */}
+                    <div className="px-3 py-2 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 bg-slate-900/90">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span style={{ color: "#E2E8F0", fontFamily: MONO, fontSize: "0.62rem", fontWeight: 700 }}>
@@ -800,7 +928,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                       className="flex-1 accent-sky-400 h-1 bg-slate-700 rounded-lg cursor-pointer"
                     />
                     <span style={{ color: "#CBD5E1", fontFamily: MONO, fontSize: "0.55rem", minWidth: "55px", textAlign: "right" }}>
-                      {((Math.max(1.5, parsedWaveform[parsedWaveform.length - 1]?.t || 7.5) - (Math.max(1.5, parsedWaveform[parsedWaveform.length - 1]?.t || 7.5) / zoom)) * panOffset).toFixed(1)}s
+                      {((Math.max(1.5, effectiveWaveform[effectiveWaveform.length - 1]?.t || 7.5) - (Math.max(1.5, effectiveWaveform[effectiveWaveform.length - 1]?.t || 7.5) / zoom)) * panOffset).toFixed(1)}s
                     </span>
                   </div>
                 )}
@@ -824,7 +952,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                     </button>
                   </div>
                   <span className="text-slate-500">
-                    {parsedWaveform.length} titik sampel · 20 Hz
+                    {effectiveWaveform.length} titik sampel · {parsedWaveform.length > 0 ? "20 Hz Pure Live" : "20 Hz Rekonstruksi Fitur"}
                   </span>
                 </div>
               </div>
@@ -1298,19 +1426,27 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                   </div>
                 )}
               </div>
-            </div>
+            </>
+          )}
+        </div>
 
             {/* Footer Modal */}
             <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50/80">
-              <button
-                onClick={handleExportDetailCSV}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 font-bold transition-all active:scale-95 cursor-pointer text-xs shadow-xs"
-                style={{ fontFamily: MONO }}
-                title="Unduh file CSV komprehensif dari rincian telemetri dan titik gelombang"
-              >
-                <Download size={13} />
-                <span>Unduh CSV Rincian</span>
-              </button>
+              {isSyncedFromFlash ? (
+                <span className="text-[0.6rem] text-slate-400 font-mono italic">
+                  Data CSV riwayat mentah tersimpan di perangkat perekam
+                </span>
+              ) : (
+                <button
+                  onClick={handleExportDetailCSV}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 font-bold transition-all active:scale-95 cursor-pointer text-xs shadow-xs"
+                  style={{ fontFamily: MONO }}
+                  title="Unduh file CSV komprehensif dari rincian telemetri dan titik gelombang"
+                >
+                  <Download size={13} />
+                  <span>Unduh CSV Rincian</span>
+                </button>
+              )}
 
               <button
                 onClick={onClose}

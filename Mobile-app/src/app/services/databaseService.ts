@@ -252,7 +252,7 @@ class DatabaseService {
   public async getAuthLogs(limit = 100): Promise<AuthLogRecord[]> {
     await this.initialize();
     if (Capacitor.isNativePlatform() && this.db) {
-      const res = await this.db.query(`SELECT * FROM log_autentikasi ORDER BY timestamp DESC LIMIT ?;`, [limit]);
+      const res = await this.db.query(`SELECT * FROM log_autentikasi ORDER BY rowid DESC LIMIT ?;`, [limit]);
       if (res?.values) {
         return res.values.map(r => ({
           id: r.id,
@@ -306,7 +306,7 @@ class DatabaseService {
   public async getRegLogs(limit = 100): Promise<RegLogRecord[]> {
     await this.initialize();
     if (Capacitor.isNativePlatform() && this.db) {
-      const res = await this.db.query(`SELECT * FROM log_registrasi ORDER BY timestamp DESC LIMIT ?;`, [limit]);
+      const res = await this.db.query(`SELECT * FROM log_registrasi ORDER BY rowid DESC LIMIT ?;`, [limit]);
       if (res?.values) {
         return res.values.map(r => ({
           id: r.id,
@@ -351,7 +351,7 @@ class DatabaseService {
   public async getSystemLogs(limit = 100): Promise<SystemLogRecord[]> {
     await this.initialize();
     if (Capacitor.isNativePlatform() && this.db) {
-      const res = await this.db.query(`SELECT * FROM log_sistem ORDER BY timestamp DESC LIMIT ?;`, [limit]);
+      const res = await this.db.query(`SELECT * FROM log_sistem ORDER BY rowid DESC LIMIT ?;`, [limit]);
       if (res?.values) {
         return res.values.map(r => ({
           id: r.id,
@@ -404,7 +404,7 @@ class DatabaseService {
   public async getDebugMLLogs(limit = 50): Promise<DebugMLLogRecord[]> {
     await this.initialize();
     if (Capacitor.isNativePlatform() && this.db) {
-      const res = await this.db.query(`SELECT * FROM log_debug_ml ORDER BY timestamp DESC LIMIT ?;`, [limit]);
+      const res = await this.db.query(`SELECT * FROM log_debug_ml ORDER BY rowid DESC LIMIT ?;`, [limit]);
       if (res?.values) {
         return res.values.map(r => ({
           id: r.id,
@@ -526,14 +526,31 @@ class DatabaseService {
     const existing = regLogs.find((r) => r.slotUser.includes(`Slot ${slot + 1}`));
 
     if (!existing) {
+      // Perangkat sekunder baru: belum ada log registrasi sama sekali untuk slot ini
       await this.addRegLog({
         timestamp: formatLogTimestamp(),
         slotUser: slotLabel,
         totalJendela: 5,
         statusAkhir: 'SUCCESS',
         message: `Profil Aktif & Terverifikasi di Flash Memori RP2040`,
-        details: '',
+        details: '', // Kosong karena perangkat sekunder tidak memiliki data buffer perekaman
       });
+    } else if (existing.slotUser !== slotLabel) {
+      // JIKA SUDAH ADA RECORD: JANGAN PERNAH MENGHAPUS / MERESET details yang sudah ada!
+      // Hanya perbarui slot_user jika nama di Flash RP2040 berubah, pertahankan data details lokal seutuhnya!
+      if (Capacitor.isNativePlatform() && this.db) {
+        await this.db.run(
+          `UPDATE log_registrasi SET slot_user = ? WHERE id = ?;`,
+          [slotLabel, existing.id]
+        );
+      } else {
+        const logs: RegLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_registrasi') || '[]');
+        const idx = logs.findIndex((l) => l.id === existing.id);
+        if (idx !== -1) {
+          logs[idx].slotUser = slotLabel;
+          localStorage.setItem('sqlite_log_registrasi', JSON.stringify(logs));
+        }
+      }
     }
   }
 
