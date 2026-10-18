@@ -985,13 +985,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
 
                       <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
                         <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                          Log-Likelihood (ln αT)
+                          Log-Likelihood (ln αT / t)
                         </p>
                         <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.95rem", fontWeight: 800, marginTop: 2 }}>
                           {summaryMetrics.logLikelihood}
                         </p>
                         <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                          Forward Algorithm (Basis: -150.0)
+                          Forward Algorithm (Length-Normalized)
                         </p>
                       </div>
 

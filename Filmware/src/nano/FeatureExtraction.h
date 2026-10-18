@@ -30,9 +30,20 @@ public:
           rollOffset(0.0f),
           pitchOffset(0.0f) {}
 
-    // Reset buffer saat memulai siklus jendela baru
+    // Reset buffer total (misal saat berhenti melangkah / ZUPT diam)
     void resetBuffer() {
         bufferIndex = 0;
+    }
+
+    // Geser buffer secara bertahap (Sliding Window dengan 50% Overlap)
+    void slideBuffer(uint16_t step = WINDOW_STEP) {
+        if (step >= WINDOW_SIZE) {
+            bufferIndex = 0;
+            return;
+        }
+        uint16_t remaining = WINDOW_SIZE - step;
+        memmove(&gyroBuffer[0][0], &gyroBuffer[step][0], remaining * 3 * sizeof(float));
+        bufferIndex = remaining;
     }
 
     // Set nilai offset kemiringan hasil Online Calibration 5 detik awal
@@ -61,7 +72,7 @@ public:
             bufferIndex++;
         }
 
-        // Bernilai true jika jendela sudah genap 300 sampel (3 detik)
+        // Bernilai true jika jendela sudah genap WINDOW_SIZE sampel (1.5 detik)
         return (bufferIndex >= WINDOW_SIZE);
     }
 
@@ -77,25 +88,45 @@ public:
         return (totalEnergy >= ZUPT_ENERGY_THRESHOLD);
     }
 
-    // Ekstraksi 5 Fitur Statistik Domain Waktu dari magnitude energi resultan
+    // Ekstraksi 5 Fitur Statistik Domain Waktu dengan Penyelarasan Fase Lembah (Heel-Strike / Valley Alignment)
     void computeFeatures(float extractedFeatures[NUM_FEATURES]) {
         // 1. Hitung magnitude sinyal 3D per timestamp: r = sqrt(gx^2 + gy^2 + gz^2)
-        float magnitude[WINDOW_SIZE];
+        float rawMag[WINDOW_SIZE];
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
             float gx = gyroBuffer[i][0];
             float gy = gyroBuffer[i][1];
             float gz = gyroBuffer[i][2];
-            magnitude[i] = sqrtf(gx * gx + gy * gy + gz * gz);
+            rawMag[i] = sqrtf(gx * gx + gy * gy + gz * gz);
         }
 
-        // Fitur 1: Rata-rata (Mean)
+        // 2. Deteksi Titik Lembah Awal (Heel-Strike / Valley Phase Alignment)
+        // Cari lembah lokal terendah pada sepertiga awal jendela (50 sampel awal)
+        uint16_t valleyIdx = 0;
+        float minValleyVal = 999.0f;
+        for (uint16_t i = 2; i < 50 && i < WINDOW_SIZE - 2; ++i) {
+            if (rawMag[i] <= rawMag[i - 1] && rawMag[i] <= rawMag[i + 1] && rawMag[i] <= rawMag[i - 2]) {
+                if (rawMag[i] < minValleyVal) {
+                    minValleyVal = rawMag[i];
+                    valleyIdx = i;
+                }
+            }
+        }
+
+        // 3. Salin data dengan rotasi fase sirkular agar awal jendela selalu sejajar dengan fase lembah hentakan langkah
+        float magnitude[WINDOW_SIZE];
+        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
+            uint16_t srcIdx = (valleyIdx + i) % WINDOW_SIZE;
+            magnitude[i] = rawMag[srcIdx];
+        }
+
+        // 4. Hitung Fitur 1: Rata-rata (Mean)
         float sum = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
             sum += magnitude[i];
         }
         float mean = sum / (float)WINDOW_SIZE;
 
-        // Akumulasi momen kedua, ketiga, dan keempat
+        // 5. Akumulasi momen kedua, ketiga, dan keempat
         float sumVar = 0.0f;
         float sumSkew = 0.0f;
         float sumKurt = 0.0f;

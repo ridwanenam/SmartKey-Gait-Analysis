@@ -270,7 +270,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       summary: {
         totalWindows: Math.max(lastProgress.current || 5, currentSessionSteps.current.length, 5),
         confidenceScore: parseFloat(scoreVal.toFixed(1)),
-        logLikelihood: parseFloat((t.logLikelihood || -150.0).toFixed(2)),
+        logLikelihood: parseFloat(((t.logLikelihood !== undefined && t.logLikelihood !== 0) ? t.logLikelihood : -25.0).toFixed(2)),
         mean: parseFloat((t.mean || 0).toFixed(3)),
         variance: parseFloat((t.variance || 0).toFixed(3)),
         stdDev: parseFloat((t.stdDev || 0).toFixed(3)),

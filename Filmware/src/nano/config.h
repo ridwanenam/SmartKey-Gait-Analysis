@@ -8,8 +8,9 @@
 // ==========================================
 constexpr float IMU_SAMPLE_RATE_HZ   = 100.0f;                       // Frekuensi sampling sensor IMU
 constexpr uint32_t IMU_SAMPLE_INTERVAL_MS = 10;                     // 100 Hz = 10 ms
-constexpr uint16_t WINDOW_SIZE       = 150;                          // 1.5 detik x 100 Hz (Responsif UX Capstone)
-constexpr uint8_t  TARGET_WINDOWS    = 5;                            // Syarat kuota 5 jendela valid (~7.5 detik total)
+constexpr uint16_t WINDOW_SIZE       = 150;                          // 1.5 detik x 100 Hz (Panjang Jendela)
+constexpr uint16_t WINDOW_STEP       = 75;                           // 50% Overlap (0.75 detik per pergeseran sliding window)
+constexpr uint8_t  TARGET_WINDOWS    = 5;                            // Syarat kuota 5 jendela valid (~4.5 detik total)
 constexpr uint32_t CALIBRATION_DURATION_MS = 500;                   // 500 ms (0.5 detik) Online Calibration awal otomatis
 
 // ==========================================
@@ -26,7 +27,7 @@ constexpr uint8_t MAX_USERS          = 5;                            // Kapasita
 constexpr uint8_t NUM_STATES         = 5;                            // Jumlah hidden states siklus melangkah
 constexpr uint8_t NUM_FEATURES       = 5;                            // 5 Fitur: Mean, Var, Std, Skew, Kurt
 constexpr float   EMA_ALPHA          = 0.15f;                        // Smoothing factor pembaruan inkremental
-constexpr float   BASE_LOG_THRESHOLD = -150.0f;                      // Ambang batas dasar log-likelihood
+constexpr float   BASE_LOG_THRESHOLD = -25.0f;                       // Ambang batas dasar log-likelihood ternormalisasi (Length-Normalized LL)
 constexpr float   CONFIDENCE_HIGH_THRESHOLD = 80.0f;                 // Ambang batas CIR minimal lolos akses (%)
 
 // ==========================================

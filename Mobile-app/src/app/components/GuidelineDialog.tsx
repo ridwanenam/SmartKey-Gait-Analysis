@@ -116,9 +116,9 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
         indicator: "Skala 0.0% s.d. 100.0%. Semakin mendekati 100% semakin cocok/identik. Pintu dibuka jika CIR ≥ 80.0%. Adaptasi model (EMA) aktif jika CIR ≥ 90.0%.",
       },
       {
-        label: "2. Log-Likelihood (LL - ln αT Forward GHMM)",
-        text: "Akumulasi probabilitas rantai transisi dan emisi Gaussian forward pass sepanjang 5 hidden states siklus melangkah. Menunjukkan seberapa wajar urutan fase langkah terhadap model.",
-        indicator: "Nilai negatif skala logaritma natural (ln). Semakin mendekati 0 (semakin tidak negatif), semakin tinggi kecocokannya. Contoh: -38.5 jauh lebih cocok dibanding -95.0. Nilai di bawah basis (-150.0) diidentifikasi sebagai langkah asing/anomali.",
+        label: "2. Log-Likelihood (LL - ln αT / t Length-Normalized)",
+        text: "Rata-rata probabilitas rantai transisi dan emisi Gaussian forward pass per langkah sepanjang 5 hidden states siklus melangkah. Menunjukkan seberapa wajar urutan fase langkah terhadap model secara adil dan stabil.",
+        indicator: "Nilai negatif skala logaritma natural (ln) per jendela. Semakin mendekati 0 (semakin tidak negatif), semakin tinggi kecocokannya. Contoh: -15.5 jauh lebih cocok dibanding -35.0. Nilai di bawah basis ambang dinamis diidentifikasi sebagai langkah asing/anomali.",
       },
       {
         label: "3. Ambang Batas Dinamis (Adaptive Threshold - Th)",

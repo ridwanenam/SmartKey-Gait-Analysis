@@ -403,7 +403,7 @@ void processTrainingState(float gx, float gy, float gz) {
                 currentState = STATE_IDLE;
             } else {
                 ble.sendTelemetry(telem);
-                featureExtractor.resetBuffer();
+                featureExtractor.slideBuffer(); // Sliding window 50% untuk kesinambungan siklus langkah
             }
         } else {
             // Jika diam/noise, pertahankan progres hitungan langkah yang sudah valid
@@ -490,10 +490,10 @@ void processAuthenticationState(float gx, float gy, float gz) {
 
         // 1. KIRIM DATA TELEMETRI KE APLIKASI PONSEL TERLEBIH DAHULU (Pastikan Jendela #5 tercatat di aplikasi)
         ble.sendTelemetry(telem);
-        featureExtractor.resetBuffer();
 
         // 2. Evaluasi apakah akumulasi 5 jendela selesai
         if (isWalking && validWindowCounter >= TARGET_WINDOWS) {
+            featureExtractor.resetBuffer();
             delay(50); // Beri ruang stack BLE mentransmisikan paket telemetri jendela ke-5 sebelum event pintu
 
             if (bestUserIdx >= 0) {
@@ -528,6 +528,12 @@ void processAuthenticationState(float gx, float gy, float gz) {
 
             currentState = STATE_IDLE;
             validWindowCounter = 0;
+        } else if (isWalking) {
+            // Geser buffer dengan sliding window 50% untuk kesinambungan siklus langkah
+            featureExtractor.slideBuffer();
+        } else {
+            // Gerak tidak valid / diam, bersihkan buffer agar tidak ada sisa artefak statis
+            featureExtractor.resetBuffer();
         }
     }
 }
