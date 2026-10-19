@@ -25,12 +25,12 @@ private:
 
     // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
     static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean (~50 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
-        // Feature 1: Variance (~1200 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
-        // Feature 2: Std (~35 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
-        // Feature 3: Skewness (~0.5) -> var floor 0.08f (std ~0.28)
-        // Feature 4: Kurtosis (~2.5) -> var floor 0.35f (std ~0.59)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 8.0f, 15000.0f, 8.0f, 0.08f, 0.35f };
+        // Feature 0: Mean (~50-65 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
+        // Feature 1: Variance (~1200-2000 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
+        // Feature 2: Cadence Regularity (~70-85%) -> var floor 25.0f (std ~5.0%)
+        // Feature 3: Skewness (~1.0) -> var floor 0.08f (std ~0.28)
+        // Feature 4: Kurtosis (~4.0) -> var floor 0.25f (std ~0.50)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 8.0f, 15000.0f, 25.0f, 0.08f, 0.25f };
         return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 

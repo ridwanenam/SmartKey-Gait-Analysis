@@ -76,7 +76,7 @@ public:
         return (bufferIndex >= WINDOW_SIZE);
     }
 
-    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk Discriminator)
+    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk & Cadence Discriminator)
     bool evaluateZUPT() const {
         float totalEnergy = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
@@ -89,7 +89,7 @@ public:
             return false; // Diam / statis
         }
 
-        // Hitung energi sentakan (jerk / deselerasi sesaat hentakan tumit ke tanah)
+        // 1. Hitung energi sentakan (jerk / deselerasi sesaat hentakan tumit ke tanah)
         float jerkEnergy = 0.0f;
         for (uint16_t i = 1; i < WINDOW_SIZE; ++i) {
             for (uint8_t j = 0; j < 3; ++j) {
@@ -104,6 +104,41 @@ public:
         if (jerkEnergy < 7.0f) {
             Serial.println(F("[ZUPT] Gerak Sinusoidal Mulus / Ayunan Tangan Terdeteksi -> Mengabaikan Jendela"));
             return false;
+        }
+
+        // 2. Penapisan Batas Fisiologis Irama Langkah (Cadence Gatekeeper - Derawi et al., 2010)
+        // Mendeteksi jarak antar-puncak untuk menolak goyangan tangan cepat yang mustahil dihasilkan kaki
+        float magSamples[WINDOW_SIZE];
+        float sumMag = 0.0f;
+        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
+            float gx = gyroBuffer[i][0];
+            float gy = gyroBuffer[i][1];
+            float gz = gyroBuffer[i][2];
+            magSamples[i] = sqrtf(gx * gx + gy * gy + gz * gz);
+            sumMag += magSamples[i];
+        }
+        float avgMag = sumMag / (float)WINDOW_SIZE;
+
+        uint16_t lastPeakIdx = 0;
+        bool hasFirstPeak = false;
+        for (uint16_t i = 2; i < WINDOW_SIZE - 2; ++i) {
+            if (magSamples[i] > avgMag && 
+                magSamples[i] > magSamples[i - 1] && 
+                magSamples[i] >= magSamples[i + 1] &&
+                magSamples[i] > magSamples[i - 2] &&
+                magSamples[i] >= magSamples[i + 2]) {
+                
+                if (hasFirstPeak) {
+                    uint16_t dist = i - lastPeakIdx;
+                    // Jarak < 22 sampel (220 ms) mustahil untuk kaki manusia melangkah (frekuensi > 4.5 Hz)
+                    if (dist < 22) {
+                        Serial.println(F("[ZUPT] Puncak Terlalu Rapat (< 220ms) -> Goyangan Tangan / Noise Tidak Wajar"));
+                        return false;
+                    }
+                }
+                lastPeakIdx = i;
+                hasFirstPeak = true;
+            }
         }
 
         return true;
@@ -163,9 +198,28 @@ public:
             sumKurt += diff4;
         }
 
-        // Fitur 2 & 3: Variansi dan Standar Deviasi
+        // Fitur 2: Variansi Sinyal (Sebaran Tenaga Langkah)
         float variance = sumVar / (float)(WINDOW_SIZE - 1);
-        float stdDev = sqrtf(variance);
+
+        // Fitur 3: Keteraturan Irama Langkah (Stride Periodicity / Cadence Regularity via Autocorrelation - Derawi et al., 2010)
+        // Menggantikan StdDev yang redundan dengan mengukur korelasi diri sinyal pada rentang lag langkah manusia (35 s.d. 80 sampel = 0.35s s.d. 0.80s)
+        float maxAutocorr = 0.0f;
+        if (sumVar > EPSILON) {
+            for (uint8_t k = 35; k <= 80; ++k) {
+                float sumCross = 0.0f;
+                for (uint16_t i = 0; i < WINDOW_SIZE - k; ++i) {
+                    sumCross += ((magnitude[i] - mean) * (magnitude[i + k] - mean));
+                }
+                // Koreksi rasio overlap (WINDOW_SIZE / (WINDOW_SIZE - k))
+                float r = (sumCross * ((float)WINDOW_SIZE / (float)(WINDOW_SIZE - k))) / sumVar;
+                if (r > maxAutocorr) {
+                    maxAutocorr = r;
+                }
+            }
+        }
+        if (maxAutocorr < 0.0f) maxAutocorr = 0.0f;
+        if (maxAutocorr > 1.0f) maxAutocorr = 1.0f;
+        float cadenceRegularity = maxAutocorr * 100.0f; // Skala persentase 0.0% s.d. 100.0% (Konsistensi Irama)
 
         // Fitur 4: Kemiringan (Skewness)
         float denomSkew = powf(sumVar / (float)WINDOW_SIZE, 1.5f);
@@ -178,7 +232,7 @@ public:
         // Salin nilai ke array fitur
         extractedFeatures[0] = mean;
         extractedFeatures[1] = variance;
-        extractedFeatures[2] = stdDev;
+        extractedFeatures[2] = cadenceRegularity; // Konsistensi Irama Langkah (menggantikan StdDev)
         extractedFeatures[3] = skewness;
         extractedFeatures[4] = kurtosis;
     }
