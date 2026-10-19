@@ -49,7 +49,10 @@ public:
         size_t actualSize = 0;
         int res = kv_get(key, &model, sizeof(UserModel), &actualSize);
 
-        if (res == 0 && actualSize == sizeof(UserModel)) {
+        if (res == 0 && (actualSize == sizeof(UserModel) || actualSize == sizeof(UserModel) - sizeof(float))) {
+            if (actualSize == sizeof(UserModel) - sizeof(float)) {
+                model.baselineLogProb = BASE_LOG_THRESHOLD;
+            }
             Serial.print(F("[STORAGE] Muat User Slot "));
             Serial.print(slotIndex);
             Serial.print(F(" ("));

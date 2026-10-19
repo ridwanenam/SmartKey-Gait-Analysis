@@ -61,6 +61,7 @@ struct UserModel {
     float transMat[NUM_STATES][NUM_STATES];
     float means[NUM_STATES][NUM_FEATURES];
     float covars[NUM_STATES][NUM_FEATURES];
+    float baselineLogProb; // Rerata Log-Likelihood baseline hasil self-evaluasi saat training
 };
 
 // ==========================================

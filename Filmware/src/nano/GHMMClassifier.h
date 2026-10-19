@@ -23,11 +23,15 @@ private:
         }
     }
 
-    // Ambang batas bawah variansi (Variance Floor) adaptif per dimensi fitur
-    static inline float getVarianceFloor(uint8_t d, float meanVal = 0.0f) {
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 0.08f, 0.04f, 0.06f, 0.12f, 0.25f };
-        float relFloor = 0.08f * (meanVal * meanVal);
-        return (relFloor > MIN_ABS_VAR_FLOOR[d]) ? relFloor : MIN_ABS_VAR_FLOOR[d];
+    // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
+    static inline float getVarianceFloor(uint8_t d) {
+        // Feature 0: Mean (~50 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
+        // Feature 1: Variance (~1200 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
+        // Feature 2: Std (~35 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
+        // Feature 3: Skewness (~0.5) -> var floor 0.08f (std ~0.28)
+        // Feature 4: Kurtosis (~2.5) -> var floor 0.35f (std ~0.59)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 8.0f, 15000.0f, 8.0f, 0.08f, 0.35f };
+        return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 
     // Perhitungan log-probabilitas emisi Gaussian Multivariat dengan asumsi matriks kovarians diagonal
@@ -36,7 +40,7 @@ private:
                              const float covars[NUM_FEATURES]) const {
         float logProb = 0.0f;
         for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-            float floorVal = getVarianceFloor(d, means[d]);
+            float floorVal = getVarianceFloor(d);
             float var = (covars[d] < floorVal) ? floorVal : covars[d];
             float diff = features[d] - means[d];
             
@@ -102,7 +106,7 @@ public:
                 sumVar += (diff * diff);
             }
             float v = sumVar / (float)(TARGET_WINDOWS > 1 ? (TARGET_WINDOWS - 1) : 1);
-            float floorVal = getVarianceFloor(d, globalMean);
+            float floorVal = getVarianceFloor(d);
             globalVar[d] = (v < floorVal) ? floorVal : v;
         }
 
@@ -128,10 +132,52 @@ public:
                     segSumVar += (diff * diff);
                 }
                 float calculatedVar = (cnt > 1) ? (segSumVar / (float)(cnt - 1)) : globalVar[d];
-                float floorVal = getVarianceFloor(d, model.means[s][d]);
+                float floorVal = getVarianceFloor(d);
                 model.covars[s][d] = (calculatedVar < floorVal) ? floorVal : calculatedVar;
             }
         }
+
+        // 5. Evaluasi mandiri (Self-Evaluation) pada data registrasi untuk menetapkan baselineLogProb
+        float alphaTrain[NUM_STATES];
+        for (uint8_t j = 0; j < NUM_STATES; ++j) {
+            float logPi = (model.startProb[j] < EPSILON) ? logf(EPSILON) : logf(model.startProb[j]);
+            float logB = computeLogEmission(windowFeatures[0], model.means[j], model.covars[j]);
+            alphaTrain[j] = logPi + logB;
+        }
+        float sumBaselineLL = -1e9f;
+        for (uint8_t s = 0; s < NUM_STATES; ++s) {
+            sumBaselineLL = logAdd(sumBaselineLL, alphaTrain[s]);
+        }
+        float totalTrainingNormLL = sumBaselineLL;
+
+        for (uint8_t w = 1; w < TARGET_WINDOWS; ++w) {
+            float nextAlpha[NUM_STATES];
+            for (uint8_t j = 0; j < NUM_STATES; ++j) {
+                float logSum = -1e9f;
+                for (uint8_t i = 0; i < NUM_STATES; ++i) {
+                    float logA = (model.transMat[i][j] < EPSILON) ? logf(EPSILON) : logf(model.transMat[i][j]);
+                    logSum = logAdd(logSum, alphaTrain[i] + logA);
+                }
+                float logB = computeLogEmission(windowFeatures[w], model.means[j], model.covars[j]);
+                nextAlpha[j] = logSum + logB;
+            }
+            for (uint8_t s = 0; s < NUM_STATES; ++s) {
+                alphaTrain[s] = nextAlpha[s];
+            }
+            float curTotalLL = -1e9f;
+            for (uint8_t s = 0; s < NUM_STATES; ++s) {
+                curTotalLL = logAdd(curTotalLL, alphaTrain[s]);
+            }
+            totalTrainingNormLL += (curTotalLL / (float)(w + 1));
+        }
+
+        float avgBaseLL = totalTrainingNormLL / (float)TARGET_WINDOWS;
+        if (avgBaseLL > -5.0f || avgBaseLL < -60.0f) {
+            avgBaseLL = BASE_LOG_THRESHOLD;
+        }
+        model.baselineLogProb = avgBaseLL;
+        Serial.print(F("[TRAIN] Baseline Log-Likelihood Ditetapkan: "));
+        Serial.println(model.baselineLogProb);
     }
 
     // Menghitung skor Forward GHMM dengan Normalisasi Panjang Urutan (Average Log-Likelihood)
@@ -181,26 +227,48 @@ public:
             averagePeak += peakWindowScores[i];
         }
         averagePeak /= 5.0f;
-        currentAdaptiveThreshold = averagePeak * 1.25f; // Margin toleransi 25%
+
+        // Tautkan ambang batas adaptif ke Baseline Log-Likelihood Profil Registrasi Pengguna
+        float baseLL = (model.baselineLogProb <= -5.0f && model.baselineLogProb >= -60.0f) 
+                       ? model.baselineLogProb : BASE_LOG_THRESHOLD;
+        
+        float dynamicTh = averagePeak * 1.25f; // Margin toleransi 25%
+
+        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 5.5)
+        // Ini mencegah jalan cepat / anomali menurunkan threshold dan lolos secara tidak sengaja
+        float hardFloorTh = baseLL - 5.5f;
+        if (dynamicTh < hardFloorTh) {
+            dynamicTh = hardFloorTh;
+        }
+        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 2.0) agar langkah normal tetap nyaman lolos
+        if (dynamicTh > baseLL - 2.0f) {
+            dynamicTh = baseLL - 2.0f;
+        }
+
+        currentAdaptiveThreshold = dynamicTh;
 
         return normalizedLogProb;
     }
 
     // Mengonversi log-likelihood ternormalisasi menjadi nilai keyakinan persentase (Confidence Score 0 - 100%)
     float calculateConfidenceScore(float normLogProb) const {
-        if (normLogProb <= -80.0f) return 0.0f; // Anomali ekstrem
+        if (normLogProb <= -70.0f) return 0.0f; // Anomali ekstrem
         
         float baselineTh = (currentAdaptiveThreshold > -5.0f) ? BASE_LOG_THRESHOLD : currentAdaptiveThreshold;
         float margin = fabsf(baselineTh);
         if (margin < 1.0f) margin = 1.0f;
 
+        // Titik ambang batas tepat (normLogProb == baselineTh) adalah 80.0% (Ambang Batas Akses Sah)
         if (normLogProb >= baselineTh) {
+            // Skala 80.0% s.d. 98.0% untuk sinyal yang di atas threshold
             float ratio = (normLogProb - baselineTh) / margin;
-            float score = 82.0f + (ratio * 18.0f);
+            if (ratio > 1.0f) ratio = 1.0f;
+            float score = 80.0f + (ratio * 18.0f);
             return (score > 100.0f) ? 100.0f : score;
         } else {
+            // Skala 80.0% turun tajam ke 0.0% untuk sinyal di bawah threshold
             float ratio = (baselineTh - normLogProb) / margin;
-            float score = 82.0f - (ratio * 55.0f);
+            float score = 80.0f - (ratio * 100.0f);
             return (score < 0.0f) ? 0.0f : score;
         }
     }
@@ -228,7 +296,7 @@ public:
             // Pembaruan variansi adaptif dengan perlindungan Variance Floor
             float diff = features[d] - newMean;
             float newVar = (EMA_ALPHA * (diff * diff)) + ((1.0f - EMA_ALPHA) * model.covars[bestState][d]);
-            float floorVal = getVarianceFloor(d, newMean);
+            float floorVal = getVarianceFloor(d);
             model.covars[bestState][d] = (newVar < floorVal) ? floorVal : newVar;
 
             totalDelta += fabsf(newMean - oldMean);

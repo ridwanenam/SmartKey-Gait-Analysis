@@ -76,7 +76,7 @@ public:
         return (bufferIndex >= WINDOW_SIZE);
     }
 
-    // Penapisan Zero-Velocity Update (ZUPT): Memisahkan jalan aktif vs berdiri diam
+    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk Discriminator)
     bool evaluateZUPT() const {
         float totalEnergy = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
@@ -85,7 +85,28 @@ public:
             }
         }
         totalEnergy /= (float)WINDOW_SIZE;
-        return (totalEnergy >= ZUPT_ENERGY_THRESHOLD);
+        if (totalEnergy < ZUPT_ENERGY_THRESHOLD) {
+            return false; // Diam / statis
+        }
+
+        // Hitung energi sentakan (jerk / deselerasi sesaat hentakan tumit ke tanah)
+        float jerkEnergy = 0.0f;
+        for (uint16_t i = 1; i < WINDOW_SIZE; ++i) {
+            for (uint8_t j = 0; j < 3; ++j) {
+                float diff = gyroBuffer[i][j] - gyroBuffer[i - 1][j];
+                jerkEnergy += (diff * diff);
+            }
+        }
+        jerkEnergy /= (float)(WINDOW_SIZE - 1);
+
+        // Langkah kaki sejati di saku menghasilkan sentakan tajam saat hentakan tumit (jerkEnergy >= 7.0)
+        // Ayunan tangan bebas di udara bersifat mulus/sinusoidal murni (jerkEnergy < 7.0)
+        if (jerkEnergy < 7.0f) {
+            Serial.println(F("[ZUPT] Gerak Sinusoidal Mulus / Ayunan Tangan Terdeteksi -> Mengabaikan Jendela"));
+            return false;
+        }
+
+        return true;
     }
 
     // Ekstraksi 5 Fitur Statistik Domain Waktu dengan Penyelarasan Fase Lembah (Heel-Strike / Valley Alignment)
