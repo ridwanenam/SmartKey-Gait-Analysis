@@ -53,14 +53,6 @@ public:
             if (actualSize == sizeof(UserModel) - sizeof(float)) {
                 model.baselineLogProb = BASE_LOG_THRESHOLD;
             }
-            // Auto-migrasi: Jika model lama di Flash menyimpan StdDev (< 50.0) di Fitur 2,
-            // sesuaikan secara mulus ke nilai dasar Stride Regularity (~78.0%) agar profil lama tetap berfungsi
-            for (uint8_t s = 0; s < NUM_STATES; ++s) {
-                if (model.means[s][2] < 50.0f) {
-                    model.means[s][2] = 78.0f;
-                    model.covars[s][2] = 25.0f;
-                }
-            }
             Serial.print(F("[STORAGE] Muat User Slot "));
             Serial.print(slotIndex);
             Serial.print(F(" ("));

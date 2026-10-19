@@ -167,10 +167,10 @@ public:
         float variance = sumVar / (float)(WINDOW_SIZE - 1);
 
         // Fitur 3: Keteraturan Irama Langkah (Stride Periodicity / Cadence Regularity via Autocorrelation - Derawi et al., 2010)
-        // Menggantikan StdDev yang redundan dengan mengukur korelasi diri sinyal pada rentang lag langkah manusia (35 s.d. 80 sampel = 0.35s s.d. 0.80s)
+        // Mengukur korelasi diri sinyal pada rentang lag stride siklus penuh langkah (35 s.d. 115 sampel = 0.35s s.d. 1.15s)
         float maxAutocorr = 0.0f;
         if (sumVar > EPSILON) {
-            for (uint8_t k = 35; k <= 80; ++k) {
+            for (uint8_t k = 35; k <= 115; ++k) {
                 float sumCross = 0.0f;
                 for (uint16_t i = 0; i < WINDOW_SIZE - k; ++i) {
                     sumCross += ((magnitude[i] - mean) * (magnitude[i + k] - mean));

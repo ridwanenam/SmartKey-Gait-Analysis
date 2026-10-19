@@ -64,6 +64,9 @@ public:
         for (uint8_t s = 0; s < NUM_STATES; ++s) {
             alphaForward[s] = -1e9f;
         }
+        for (uint8_t i = 0; i < 5; ++i) {
+            peakWindowScores[i] = BASE_LOG_THRESHOLD;
+        }
         peakIndex = 0;
         currentAdaptiveThreshold = BASE_LOG_THRESHOLD;
     }
@@ -234,15 +237,15 @@ public:
         
         float dynamicTh = averagePeak * 1.25f; // Margin toleransi 25%
 
-        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 5.5)
+        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 3.8)
         // Ini mencegah jalan cepat / anomali menurunkan threshold dan lolos secara tidak sengaja
-        float hardFloorTh = baseLL - 5.5f;
+        float hardFloorTh = baseLL - 3.8f;
         if (dynamicTh < hardFloorTh) {
             dynamicTh = hardFloorTh;
         }
-        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 2.0) agar langkah normal tetap nyaman lolos
-        if (dynamicTh > baseLL - 2.0f) {
-            dynamicTh = baseLL - 2.0f;
+        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 1.5) agar langkah normal tetap nyaman lolos
+        if (dynamicTh > baseLL - 1.5f) {
+            dynamicTh = baseLL - 1.5f;
         }
 
         currentAdaptiveThreshold = dynamicTh;
