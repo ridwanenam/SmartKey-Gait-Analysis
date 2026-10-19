@@ -76,7 +76,7 @@ public:
         return (bufferIndex >= WINDOW_SIZE);
     }
 
-    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk & Cadence Discriminator)
+    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk Discriminator)
     bool evaluateZUPT() const {
         float totalEnergy = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
@@ -89,7 +89,7 @@ public:
             return false; // Diam / statis
         }
 
-        // 1. Hitung energi sentakan (jerk / deselerasi sesaat hentakan tumit ke tanah)
+        // Hitung energi sentakan (jerk / deselerasi sesaat hentakan tumit ke tanah)
         float jerkEnergy = 0.0f;
         for (uint16_t i = 1; i < WINDOW_SIZE; ++i) {
             for (uint8_t j = 0; j < 3; ++j) {
@@ -99,46 +99,11 @@ public:
         }
         jerkEnergy /= (float)(WINDOW_SIZE - 1);
 
-        // Langkah kaki sejati di saku menghasilkan sentakan tajam saat hentakan tumit (jerkEnergy >= 7.0)
-        // Ayunan tangan bebas di udara bersifat mulus/sinusoidal murni (jerkEnergy < 7.0)
-        if (jerkEnergy < 7.0f) {
+        // Langkah kaki sejati di saku menghasilkan sentakan saat hentakan tumit (jerkEnergy >= 4.5)
+        // Ayunan tangan bebas di udara bersifat mulus/sinusoidal murni (jerkEnergy < 4.5)
+        if (jerkEnergy < 4.5f) {
             Serial.println(F("[ZUPT] Gerak Sinusoidal Mulus / Ayunan Tangan Terdeteksi -> Mengabaikan Jendela"));
             return false;
-        }
-
-        // 2. Penapisan Batas Fisiologis Irama Langkah (Cadence Gatekeeper - Derawi et al., 2010)
-        // Mendeteksi jarak antar-puncak untuk menolak goyangan tangan cepat yang mustahil dihasilkan kaki
-        float magSamples[WINDOW_SIZE];
-        float sumMag = 0.0f;
-        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
-            float gx = gyroBuffer[i][0];
-            float gy = gyroBuffer[i][1];
-            float gz = gyroBuffer[i][2];
-            magSamples[i] = sqrtf(gx * gx + gy * gy + gz * gz);
-            sumMag += magSamples[i];
-        }
-        float avgMag = sumMag / (float)WINDOW_SIZE;
-
-        uint16_t lastPeakIdx = 0;
-        bool hasFirstPeak = false;
-        for (uint16_t i = 2; i < WINDOW_SIZE - 2; ++i) {
-            if (magSamples[i] > avgMag && 
-                magSamples[i] > magSamples[i - 1] && 
-                magSamples[i] >= magSamples[i + 1] &&
-                magSamples[i] > magSamples[i - 2] &&
-                magSamples[i] >= magSamples[i + 2]) {
-                
-                if (hasFirstPeak) {
-                    uint16_t dist = i - lastPeakIdx;
-                    // Jarak < 22 sampel (220 ms) mustahil untuk kaki manusia melangkah (frekuensi > 4.5 Hz)
-                    if (dist < 22) {
-                        Serial.println(F("[ZUPT] Puncak Terlalu Rapat (< 220ms) -> Goyangan Tangan / Noise Tidak Wajar"));
-                        return false;
-                    }
-                }
-                lastPeakIdx = i;
-                hasFirstPeak = true;
-            }
         }
 
         return true;
