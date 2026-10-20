@@ -25,12 +25,12 @@ private:
 
     // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
     static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean (~50-65 deg/s) -> var floor 8.0f (std ~2.8 deg/s)
+        // Feature 0: Mean (~50-65 deg/s) -> var floor 36.0f (std ~6.0 deg/s, toleran terhadap variasi alami ayunan paha)
         // Feature 1: Variance (~1200-2000 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
-        // Feature 2: Cadence Regularity (~70-85%) -> var floor 25.0f (std ~5.0%)
+        // Feature 2: Cadence Regularity (~65-85%) -> var floor 50.0f (std ~7.1%)
         // Feature 3: Skewness (~1.0) -> var floor 0.08f (std ~0.28)
         // Feature 4: Kurtosis (~4.0) -> var floor 0.25f (std ~0.50)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 8.0f, 15000.0f, 25.0f, 0.08f, 0.25f };
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 36.0f, 15000.0f, 50.0f, 0.08f, 0.25f };
         return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 
@@ -82,15 +82,15 @@ public:
             model.startProb[s] = 1.0f / (float)NUM_STATES;
         }
 
-        // 2. Inisialisasi matriks transisi keadaan (A) dengan topologi left-to-right teratur
+        // 2. Inisialisasi matriks transisi keadaan (A) semi-ergodik (prioritas maju dengan probabilitas latar belakang)
         for (uint8_t i = 0; i < NUM_STATES; ++i) {
             for (uint8_t j = 0; j < NUM_STATES; ++j) {
                 if (i == j) {
-                    model.transMat[i][j] = 0.60f; // Peluang bertahan di state yang sama
+                    model.transMat[i][j] = 0.50f; // Peluang bertahan di state yang sama
                 } else if (j == (i + 1) % NUM_STATES) {
-                    model.transMat[i][j] = 0.40f; // Peluang transisi ke siklus langkah berikutnya
+                    model.transMat[i][j] = 0.35f; // Peluang transisi ke siklus langkah berikutnya
                 } else {
-                    model.transMat[i][j] = 0.0f;
+                    model.transMat[i][j] = 0.05f; // Probabilitas latar belakang untuk pemulihan fase (phase recovery)
                 }
             }
         }

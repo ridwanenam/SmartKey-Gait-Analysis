@@ -109,51 +109,29 @@ public:
         return true;
     }
 
-    // Ekstraksi 5 Fitur Statistik Domain Waktu dengan Penyelarasan Fase Lembah (Heel-Strike / Valley Alignment)
+    // Ekstraksi 5 Fitur Statistik Domain Waktu & Keteraturan Irama Langkah (Autokorelasi Sinyal Kontinu)
     void computeFeatures(float extractedFeatures[NUM_FEATURES]) {
         // 1. Hitung magnitude sinyal 3D per timestamp: r = sqrt(gx^2 + gy^2 + gz^2)
         float rawMag[WINDOW_SIZE];
+        float sum = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
             float gx = gyroBuffer[i][0];
             float gy = gyroBuffer[i][1];
             float gz = gyroBuffer[i][2];
             rawMag[i] = sqrtf(gx * gx + gy * gy + gz * gz);
+            sum += rawMag[i];
         }
 
-        // 2. Deteksi Titik Lembah Awal (Heel-Strike / Valley Phase Alignment)
-        // Cari lembah lokal terendah pada sepertiga awal jendela (50 sampel awal)
-        uint16_t valleyIdx = 0;
-        float minValleyVal = 999.0f;
-        for (uint16_t i = 2; i < 50 && i < WINDOW_SIZE - 2; ++i) {
-            if (rawMag[i] <= rawMag[i - 1] && rawMag[i] <= rawMag[i + 1] && rawMag[i] <= rawMag[i - 2]) {
-                if (rawMag[i] < minValleyVal) {
-                    minValleyVal = rawMag[i];
-                    valleyIdx = i;
-                }
-            }
-        }
-
-        // 3. Salin data dengan rotasi fase sirkular agar awal jendela selalu sejajar dengan fase lembah hentakan langkah
-        float magnitude[WINDOW_SIZE];
-        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
-            uint16_t srcIdx = (valleyIdx + i) % WINDOW_SIZE;
-            magnitude[i] = rawMag[srcIdx];
-        }
-
-        // 4. Hitung Fitur 1: Rata-rata (Mean)
-        float sum = 0.0f;
-        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
-            sum += magnitude[i];
-        }
+        // 2. Hitung Fitur 1: Rata-rata (Mean)
         float mean = sum / (float)WINDOW_SIZE;
 
-        // 5. Akumulasi momen kedua, ketiga, dan keempat
+        // 3. Akumulasi momen kedua, ketiga, dan keempat pada sinyal kontinu tanpa artefak pemotongan
         float sumVar = 0.0f;
         float sumSkew = 0.0f;
         float sumKurt = 0.0f;
 
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
-            float diff = magnitude[i] - mean;
+            float diff = rawMag[i] - mean;
             float diff2 = diff * diff;
             float diff3 = diff2 * diff;
             float diff4 = diff2 * diff2;
@@ -167,13 +145,13 @@ public:
         float variance = sumVar / (float)(WINDOW_SIZE - 1);
 
         // Fitur 3: Keteraturan Irama Langkah (Stride Periodicity / Cadence Regularity via Autocorrelation - Derawi et al., 2010)
-        // Mengukur korelasi diri sinyal pada rentang lag stride siklus penuh langkah (35 s.d. 115 sampel = 0.35s s.d. 1.15s)
+        // Dihitung langsung dari sinyal fisik kontinu asli (tanpa artefak lonjakan rotasi modular)
         float maxAutocorr = 0.0f;
         if (sumVar > EPSILON) {
             for (uint8_t k = 35; k <= 115; ++k) {
                 float sumCross = 0.0f;
                 for (uint16_t i = 0; i < WINDOW_SIZE - k; ++i) {
-                    sumCross += ((magnitude[i] - mean) * (magnitude[i + k] - mean));
+                    sumCross += ((rawMag[i] - mean) * (rawMag[i + k] - mean));
                 }
                 // Koreksi rasio overlap (WINDOW_SIZE / (WINDOW_SIZE - k))
                 float r = (sumCross * ((float)WINDOW_SIZE / (float)(WINDOW_SIZE - k))) / sumVar;
