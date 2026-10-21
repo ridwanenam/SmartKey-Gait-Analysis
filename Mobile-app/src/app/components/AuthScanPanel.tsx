@@ -281,43 +281,43 @@ export function AuthScanPanel({
 
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-left">
               <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Mean (μ)</p>
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Mean Gyro (μ)</p>
                 <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning && progress > 0 && telemetry?.mean ? `${telemetry.mean.toFixed(3)}g` : "—"}
+                  {isScanning && progress > 0 && telemetry?.mean !== undefined ? `${telemetry.mean.toFixed(1)}°/s` : "—"}
                 </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Tenaga Ayunan</p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Rata-rata Putaran</p>
               </div>
 
               <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
                 <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Variansi (σ²)</p>
                 <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning && progress > 0 && telemetry?.variance ? telemetry.variance.toFixed(3) : "—"}
+                  {isScanning && progress > 0 && telemetry?.variance !== undefined ? telemetry.variance.toFixed(1) : "—"}
                 </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Sebaran Tenaga</p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Dinamika Putaran</p>
               </div>
 
               <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Std Dev (σ)</p>
+                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Cadence (R)</p>
                 <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning && progress > 0 && telemetry?.stdDev ? `${telemetry.stdDev.toFixed(3)}g` : "—"}
+                  {isScanning && progress > 0 && telemetry?.stdDev !== undefined ? `${telemetry.stdDev.toFixed(1)}%` : "—"}
                 </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Konsistensi Irama</p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Keteraturan Irama</p>
               </div>
 
               <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Skewness (γ1)</p>
+                <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Periode (k)</p>
                 <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning && progress > 0 && telemetry?.skewness !== undefined ? telemetry.skewness.toFixed(3) : "—"}
+                  {isScanning && progress > 0 && telemetry?.skewness !== undefined ? `${telemetry.skewness.toFixed(0)} smp` : "—"}
                 </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Asimetri Ayunan</p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Lag Autokorelasi</p>
               </div>
 
               <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs col-span-2 sm:col-span-1">
-                <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Kurtosis (β2)</p>
+                <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.48rem", textTransform: "uppercase" }}>Hentakan (Acc)</p>
                 <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning && progress > 0 && telemetry?.kurtosis ? telemetry.kurtosis.toFixed(3) : "—"}
+                  {isScanning && progress > 0 && telemetry?.kurtosis !== undefined ? `${telemetry.kurtosis.toFixed(1)} %g` : "—"}
                 </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Heel-Strike Peak</p>
+                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Ground Reaction</p>
               </div>
             </div>
           </div>
@@ -354,7 +354,7 @@ export function AuthScanPanel({
                     : "—"}
                 </p>
                 <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Aktif jika Skor CIR ≥ 90%
+                  Aktif jika CIR ≥ 90% (Margin ≥ 6%)
                 </p>
               </div>
 

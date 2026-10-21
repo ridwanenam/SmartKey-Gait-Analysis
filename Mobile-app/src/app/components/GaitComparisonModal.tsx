@@ -249,11 +249,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     const steps = baseParsed.steps;
     const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
 
-    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "0.220"));
-    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "0.160"));
-    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? Math.sqrt(Math.max(0.001, variance)).toFixed(3)));
-    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "0.150"));
-    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "2.850"));
+    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "75.0"));
+    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "1200.0"));
+    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "85.0"));
+    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "65.0"));
+    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "45.0"));
 
     return { mean, variance, stdDev, skewness, kurtosis };
   }, [baseParsed]);
@@ -264,11 +264,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     const steps = headParsed.steps;
     const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
 
-    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "0.235"));
-    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "0.180"));
-    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? Math.sqrt(Math.max(0.001, variance)).toFixed(3)));
-    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "0.190"));
-    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "3.100"));
+    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "78.0"));
+    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "1350.0"));
+    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "82.0"));
+    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "67.0"));
+    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "48.0"));
 
     return { mean, variance, stdDev, skewness, kurtosis };
   }, [headParsed]);
@@ -541,11 +541,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
     csv += "=== PERBANDINGAN PARAMETER KINEMATIKA 5D (AGGREGATE) ===\r\n";
     csv += "Parameter,Base_Referensi,Head_Kandidat,Delta_Selisih,Batas_Toleransi,Status\r\n";
-    csv += `Rerata_Mean_g,${base5D.mean},${head5D.mean},${deltas.dMean},±0.08g,${Math.abs(deltas.dMean) <= 0.08 ? "VALID" : "DEVIASI"}\r\n`;
-    csv += `Varians_Variance_g2,${base5D.variance},${head5D.variance},${deltas.dVar},±0.06g2,${Math.abs(deltas.dVar) <= 0.06 ? "VALID" : "DEVIASI"}\r\n`;
-    csv += `Standar_Deviasi_g,${base5D.stdDev},${head5D.stdDev},${deltas.dStd},±0.08g,${Math.abs(deltas.dStd) <= 0.08 ? "VALID" : "DEVIASI"}\r\n`;
-    csv += `Kemiringan_Skewness,${base5D.skewness},${head5D.skewness},${deltas.dSkew},±0.35,${Math.abs(deltas.dSkew) <= 0.35 ? "VALID" : "DEVIASI"}\r\n`;
-    csv += `Keruncingan_Kurtosis,${base5D.kurtosis},${head5D.kurtosis},${deltas.dKurt},±0.75,${Math.abs(deltas.dKurt) <= 0.75 ? "VALID" : "DEVIASI"}\r\n\r\n`;
+    csv += `Rerata_Mean_Gyro_dps,${base5D.mean},${head5D.mean},${deltas.dMean},±18.0dps,${Math.abs(deltas.dMean) <= 18.0 ? "VALID" : "DEVIASI"}\r\n`;
+    csv += `Varians_Gyro_Variance,${base5D.variance},${head5D.variance},${deltas.dVar},±450.0,${Math.abs(deltas.dVar) <= 450.0 ? "VALID" : "DEVIASI"}\r\n`;
+    csv += `Keteraturan_Cadence_Persen,${base5D.stdDev},${head5D.stdDev},${deltas.dStd},±15.0%,${Math.abs(deltas.dStd) <= 15.0 ? "VALID" : "DEVIASI"}\r\n`;
+    csv += `Periode_Langkah_smp,${base5D.skewness},${head5D.skewness},${deltas.dSkew},±10smp,${Math.abs(deltas.dSkew) <= 10.0 ? "VALID" : "DEVIASI"}\r\n`;
+    csv += `Hentakan_Kaki_Impact_PersenG,${base5D.kurtosis},${head5D.kurtosis},${deltas.dKurt},±18.0%g,${Math.abs(deltas.dKurt) <= 18.0 ? "VALID" : "DEVIASI"}\r\n\r\n`;
 
     csv += "=== RINCIAN KOMPARASI JENDELA DEMI JENDELA (1 s.d. 5) ===\r\n";
     csv += "Jendela,Base_Mean,Head_Mean,Base_Var,Head_Var,Base_ZUPT,Head_ZUPT\r\n";
@@ -821,11 +821,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {[
-                        { label: "Rerata Akselerasi (Mean)", baseVal: `${base5D.mean.toFixed(3)} g`, headVal: `${head5D.mean.toFixed(3)} g`, delta: `${deltas.dMean >= 0 ? "+" : ""}${deltas.dMean.toFixed(3)} g`, tol: "±0.080 g", pass: Math.abs(deltas.dMean) <= 0.08 },
-                        { label: "Varians Sinyal (Variance / σ²)", baseVal: `${base5D.variance.toFixed(3)} g²`, headVal: `${head5D.variance.toFixed(3)} g²`, delta: `${deltas.dVar >= 0 ? "+" : ""}${deltas.dVar.toFixed(3)} g²`, tol: "±0.060 g²", pass: Math.abs(deltas.dVar) <= 0.06 },
-                        { label: "Standar Deviasi (StdDev / σ)", baseVal: `${base5D.stdDev.toFixed(3)} g`, headVal: `${head5D.stdDev.toFixed(3)} g`, delta: `${deltas.dStd >= 0 ? "+" : ""}${deltas.dStd.toFixed(3)} g`, tol: "±0.080 g", pass: Math.abs(deltas.dStd) <= 0.08 },
-                        { label: "Kemiringan Asimetri (Skewness / γ1)", baseVal: `${base5D.skewness.toFixed(3)}`, headVal: `${head5D.skewness.toFixed(3)}`, delta: `${deltas.dSkew >= 0 ? "+" : ""}${deltas.dSkew.toFixed(3)}`, tol: "±0.350", pass: Math.abs(deltas.dSkew) <= 0.35 },
-                        { label: "Keruncingan Hentakan (Kurtosis / β2)", baseVal: `${base5D.kurtosis.toFixed(3)}`, headVal: `${head5D.kurtosis.toFixed(3)}`, delta: `${deltas.dKurt >= 0 ? "+" : ""}${deltas.dKurt.toFixed(3)}`, tol: "±0.750", pass: Math.abs(deltas.dKurt) <= 0.75 },
+                        { label: "Rerata Kecepatan Sudut (Mean Gyro / μ)", baseVal: `${base5D.mean.toFixed(1)} °/s`, headVal: `${head5D.mean.toFixed(1)} °/s`, delta: `${deltas.dMean >= 0 ? "+" : ""}${deltas.dMean.toFixed(1)} °/s`, tol: "±18.0 °/s", pass: Math.abs(deltas.dMean) <= 18.0 },
+                        { label: "Varians Sinyal Gyro (Variance / σ²)", baseVal: `${base5D.variance.toFixed(1)}`, headVal: `${head5D.variance.toFixed(1)}`, delta: `${deltas.dVar >= 0 ? "+" : ""}${deltas.dVar.toFixed(1)}`, tol: "±450.0", pass: Math.abs(deltas.dVar) <= 450.0 },
+                        { label: "Keteraturan Irama (Cadence Regularity / R)", baseVal: `${base5D.stdDev.toFixed(1)} %`, headVal: `${head5D.stdDev.toFixed(1)} %`, delta: `${deltas.dStd >= 0 ? "+" : ""}${deltas.dStd.toFixed(1)} %`, tol: "±15.0 %", pass: Math.abs(deltas.dStd) <= 15.0 },
+                        { label: "Periode Langkah (Stride Period / k)", baseVal: `${base5D.skewness.toFixed(0)} smp`, headVal: `${head5D.skewness.toFixed(0)} smp`, delta: `${deltas.dSkew >= 0 ? "+" : ""}${deltas.dSkew.toFixed(0)} smp`, tol: "±10 smp", pass: Math.abs(deltas.dSkew) <= 10.0 },
+                        { label: "Hentakan Kaki Dinamis (Impact / %g)", baseVal: `${base5D.kurtosis.toFixed(1)} %g`, headVal: `${head5D.kurtosis.toFixed(1)} %g`, delta: `${deltas.dKurt >= 0 ? "+" : ""}${deltas.dKurt.toFixed(1)} %g`, tol: "±18.0 %g", pass: Math.abs(deltas.dKurt) <= 18.0 },
                       ].map((row) => (
                         <tr key={row.label} className="hover:bg-slate-50/60 transition-colors">
                           <td className="px-3.5 py-2.5 font-sans font-semibold text-slate-800 text-[0.72rem]">
@@ -965,20 +965,24 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: MONO }}>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Rerata Accel:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.mean ?? "0.220"} g</p>
+                            <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
+                            <p className="font-bold text-cyan-900">{bStep?.mean ?? "75.0"} °/s</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Varians:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.variance ?? "0.160"} g²</p>
+                            <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
+                            <p className="font-bold text-cyan-900">{bStep?.variance ?? "1200.0"}</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">StdDev:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.stdDev ?? "0.400"} g</p>
+                            <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
+                            <p className="font-bold text-cyan-900">{bStep?.stdDev ?? "85.0"} %</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Kurtosis:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.kurtosis ?? "2.800"}</p>
+                            <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
+                            <p className="font-bold text-cyan-900">{bStep?.skewness ?? "65"} smp</p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
+                            <p className="font-bold text-cyan-900">{bStep?.kurtosis ?? "45.0"} %g</p>
                           </div>
                         </div>
                         <div className="pt-2 border-t border-cyan-100 flex items-center justify-between text-[0.58rem]" style={{ fontFamily: MONO }}>
@@ -1006,20 +1010,24 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: MONO }}>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Rerata Accel:</span>
-                            <p className="font-bold text-orange-900">{hStep?.mean ?? "0.235"} g</p>
+                            <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
+                            <p className="font-bold text-orange-900">{hStep?.mean ?? "78.0"} °/s</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Varians:</span>
-                            <p className="font-bold text-orange-900">{hStep?.variance ?? "0.180"} g²</p>
+                            <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
+                            <p className="font-bold text-orange-900">{hStep?.variance ?? "1350.0"}</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">StdDev:</span>
-                            <p className="font-bold text-orange-900">{hStep?.stdDev ?? "0.424"} g</p>
+                            <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
+                            <p className="font-bold text-orange-900">{hStep?.stdDev ?? "82.0"} %</p>
                           </div>
                           <div>
-                            <span className="text-slate-500 text-[0.58rem]">Kurtosis:</span>
-                            <p className="font-bold text-orange-900">{hStep?.kurtosis ?? "3.100"}</p>
+                            <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
+                            <p className="font-bold text-orange-900">{hStep?.skewness ?? "67"} smp</p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
+                            <p className="font-bold text-orange-900">{hStep?.kurtosis ?? "48.0"} %g</p>
                           </div>
                         </div>
                         <div className="pt-2 border-t border-orange-100 flex items-center justify-between text-[0.58rem]" style={{ fontFamily: MONO }}>

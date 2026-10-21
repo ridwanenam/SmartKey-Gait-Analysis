@@ -25,12 +25,12 @@ private:
 
     // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
     static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean (~50-65 deg/s) -> var floor 36.0f (std ~6.0 deg/s, toleran terhadap variasi alami ayunan paha)
-        // Feature 1: Variance (~1200-2000 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
+        // Feature 0: Mean Gyro (~50-65 deg/s) -> var floor 36.0f (std ~6.0 deg/s)
+        // Feature 1: Variance Gyro (~1200-2000 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
         // Feature 2: Cadence Regularity (~65-85%) -> var floor 50.0f (std ~7.1%)
-        // Feature 3: Skewness (~1.0) -> var floor 0.08f (std ~0.28)
-        // Feature 4: Kurtosis (~4.0) -> var floor 0.25f (std ~0.50)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 36.0f, 15000.0f, 50.0f, 0.08f, 0.25f };
+        // Feature 3: Stride Period (~45-75 sampel) -> var floor 16.0f (std ~4.0 sampel)
+        // Feature 4: Heel-Strike Impact (~35-70 %g) -> var floor 25.0f (std ~5.0 %g)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 36.0f, 15000.0f, 50.0f, 16.0f, 25.0f };
         return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 
@@ -82,15 +82,13 @@ public:
             model.startProb[s] = 1.0f / (float)NUM_STATES;
         }
 
-        // 2. Inisialisasi matriks transisi keadaan (A) semi-ergodik (prioritas maju dengan probabilitas latar belakang)
+        // 2. Inisialisasi matriks transisi keadaan (A) 2-state siklus langkah bergantian (Stance vs Swing)
         for (uint8_t i = 0; i < NUM_STATES; ++i) {
             for (uint8_t j = 0; j < NUM_STATES; ++j) {
                 if (i == j) {
-                    model.transMat[i][j] = 0.50f; // Peluang bertahan di state yang sama
-                } else if (j == (i + 1) % NUM_STATES) {
-                    model.transMat[i][j] = 0.35f; // Peluang transisi ke siklus langkah berikutnya
+                    model.transMat[i][j] = 0.55f; // Peluang bertahan di state yang sama
                 } else {
-                    model.transMat[i][j] = 0.05f; // Probabilitas latar belakang untuk pemulihan fase (phase recovery)
+                    model.transMat[i][j] = 0.45f; // Peluang transisi ke siklus langkah berikutnya
                 }
             }
         }
@@ -225,11 +223,13 @@ public:
         peakWindowScores[peakIndex] = normalizedLogProb;
         peakIndex = (peakIndex + 1) % 5;
 
+        // Rata-ratakan hanya sebanyak jendela yang sudah benar-benar masuk (tanpa terdistorsi nilai dummy awal)
+        uint8_t activeCount = (windowStep < 5) ? (windowStep > 0 ? windowStep : 1) : 5;
         float averagePeak = 0.0f;
-        for (uint8_t i = 0; i < 5; ++i) {
+        for (uint8_t i = 0; i < activeCount; ++i) {
             averagePeak += peakWindowScores[i];
         }
-        averagePeak /= 5.0f;
+        averagePeak /= (float)activeCount;
 
         // Tautkan ambang batas adaptif ke Baseline Log-Likelihood Profil Registrasi Pengguna
         float baseLL = (model.baselineLogProb <= -5.0f && model.baselineLogProb >= -60.0f) 
@@ -296,12 +296,7 @@ public:
             float newMean = (EMA_ALPHA * features[d]) + ((1.0f - EMA_ALPHA) * oldMean);
             model.means[bestState][d] = newMean;
 
-            // Pembaruan variansi adaptif dengan perlindungan Variance Floor
-            float diff = features[d] - newMean;
-            float newVar = (EMA_ALPHA * (diff * diff)) + ((1.0f - EMA_ALPHA) * model.covars[bestState][d]);
-            float floorVal = getVarianceFloor(d);
-            model.covars[bestState][d] = (newVar < floorVal) ? floorVal : newVar;
-
+            // Bekukan kovarians (covars) agar tidak terjadi threshold drift dan batas toleransi tidak melebar tak terkendali
             totalDelta += fabsf(newMean - oldMean);
         }
 

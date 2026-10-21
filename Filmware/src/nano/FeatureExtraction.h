@@ -13,8 +13,9 @@ private:
     SimpleKalmanFilter kalmanGy;
     SimpleKalmanFilter kalmanGz;
 
-    // Buffer sirkular untuk 1 jendela data (300 sampel x 3 sumbu)
+    // Buffer sirkular untuk 1 jendela data (giroskop 3 sumbu & magnitudo akselerasi dinamis skalar)
     float gyroBuffer[WINDOW_SIZE][3];
+    float accMagBuffer[WINDOW_SIZE];
     uint16_t bufferIndex;
 
     // Komponen offset dynamic online calibration
@@ -43,6 +44,7 @@ public:
         }
         uint16_t remaining = WINDOW_SIZE - step;
         memmove(&gyroBuffer[0][0], &gyroBuffer[step][0], remaining * 3 * sizeof(float));
+        memmove(&accMagBuffer[0], &accMagBuffer[step], remaining * sizeof(float));
         bufferIndex = remaining;
     }
 
@@ -52,23 +54,28 @@ public:
         pitchOffset = pitch;
     }
 
-    // Memasukkan 1 sampel data mentah gyro, menyaring noise via Kalman, dan menyimpan ke buffer
-    bool addSample(float gx, float gy, float gz) {
+    // Memasukkan 1 sampel data mentah IMU (akselerometer & giroskop), menyaring noise via Kalman, dan menyimpan ke buffer
+    bool addSample(float ax, float ay, float az, float gx, float gy, float gz) {
         // 1. Reduksi getaran kain/deadband
         gx = (fabs(gx) < GYRO_THRESHOLD) ? 0.0f : gx;
         gy = (fabs(gy) < GYRO_THRESHOLD) ? 0.0f : gy;
         gz = (fabs(gz) < GYRO_THRESHOLD) ? 0.0f : gz;
 
-        // 2. Filter Kalman diskrit
+        // 2. Filter Kalman diskrit gyro
         float filteredX = kalmanGx.updateEstimate(gx);
         float filteredY = kalmanGy.updateEstimate(gy);
         float filteredZ = kalmanGz.updateEstimate(gz);
 
-        // 3. Simpan ke buffer
+        // 3. Hitung magnitudo akselerasi skalar dan kurangi komponen gravitasi bumi 1.0g (100% Orientation Invariant)
+        float accMag = sqrtf(ax * ax + ay * ay + az * az);
+        float dynAcc = fabsf(accMag - 1.0f); // Intensitas getaran/hentakan translasi
+
+        // 4. Simpan ke buffer
         if (bufferIndex < WINDOW_SIZE) {
             gyroBuffer[bufferIndex][0] = filteredX;
             gyroBuffer[bufferIndex][1] = filteredY;
             gyroBuffer[bufferIndex][2] = filteredZ;
+            accMagBuffer[bufferIndex] = dynAcc;
             bufferIndex++;
         }
 
@@ -109,9 +116,9 @@ public:
         return true;
     }
 
-    // Ekstraksi 5 Fitur Statistik Domain Waktu & Keteraturan Irama Langkah (Autokorelasi Sinyal Kontinu)
+    // Ekstraksi 5 Fitur Biometrik Ortogonal & Invarian Orientasi
     void computeFeatures(float extractedFeatures[NUM_FEATURES]) {
-        // 1. Hitung magnitude sinyal 3D per timestamp: r = sqrt(gx^2 + gy^2 + gz^2)
+        // 1. Hitung magnitude sinyal 3D gyro per timestamp: r = sqrt(gx^2 + gy^2 + gz^2)
         float rawMag[WINDOW_SIZE];
         float sum = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
@@ -122,31 +129,23 @@ public:
             sum += rawMag[i];
         }
 
-        // 2. Hitung Fitur 1: Rata-rata (Mean)
+        // Fitur 0: Rerata Kecepatan Sudut Ayunan Paha (Mean Gyro, deg/s)
         float mean = sum / (float)WINDOW_SIZE;
 
-        // 3. Akumulasi momen kedua, ketiga, dan keempat pada sinyal kontinu tanpa artefak pemotongan
+        // 2. Akumulasi momen variansi tenaga langkah
         float sumVar = 0.0f;
-        float sumSkew = 0.0f;
-        float sumKurt = 0.0f;
-
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
             float diff = rawMag[i] - mean;
-            float diff2 = diff * diff;
-            float diff3 = diff2 * diff;
-            float diff4 = diff2 * diff2;
-
-            sumVar += diff2;
-            sumSkew += diff3;
-            sumKurt += diff4;
+            sumVar += (diff * diff);
         }
 
-        // Fitur 2: Variansi Sinyal (Sebaran Tenaga Langkah)
+        // Fitur 1: Variansi Sinyal Gyro (deg^2/s^2)
         float variance = sumVar / (float)(WINDOW_SIZE - 1);
 
-        // Fitur 3: Keteraturan Irama Langkah (Stride Periodicity / Cadence Regularity via Autocorrelation - Derawi et al., 2010)
-        // Dihitung langsung dari sinyal fisik kontinu asli (tanpa artefak lonjakan rotasi modular)
+        // Fitur 2 & Fitur 3: Keteraturan Irama Langkah & Periode Langkah Sejati (Stride Lag / k_peak)
+        // Dihitung dari autokorelasi sinyal fisik kontinu asli (rentang lag k = 35 s.d. 115 sampel = 0.35s s.d. 1.15s)
         float maxAutocorr = 0.0f;
+        uint8_t bestLag = 55; // Nilai default tengah
         if (sumVar > EPSILON) {
             for (uint8_t k = 35; k <= 115; ++k) {
                 float sumCross = 0.0f;
@@ -157,27 +156,35 @@ public:
                 float r = (sumCross * ((float)WINDOW_SIZE / (float)(WINDOW_SIZE - k))) / sumVar;
                 if (r > maxAutocorr) {
                     maxAutocorr = r;
+                    bestLag = k;
                 }
             }
         }
         if (maxAutocorr < 0.0f) maxAutocorr = 0.0f;
         if (maxAutocorr > 1.0f) maxAutocorr = 1.0f;
-        float cadenceRegularity = maxAutocorr * 100.0f; // Skala persentase 0.0% s.d. 100.0% (Konsistensi Irama)
+        
+        // Fitur 2: Konsistensi Irama Langkah (0.0% s.d. 100.0%)
+        float cadenceRegularity = maxAutocorr * 100.0f;
 
-        // Fitur 4: Kemiringan (Skewness)
-        float denomSkew = powf(sumVar / (float)WINDOW_SIZE, 1.5f);
-        float skewness = (denomSkew > EPSILON) ? ((sumSkew / (float)WINDOW_SIZE) / denomSkew) : 0.0f;
+        // Fitur 3: Periode Langkah Sejati (Dominant Stride Period, satuan: jumlah sampel @ 10ms)
+        // Sidik jari biometrik anatomi (panjang kaki / ritme motorik) yang membedakan antar pengguna
+        float stridePeriod = (float)bestLag;
 
-        // Fitur 5: Keruncingan (Kurtosis)
-        float denomKurt = powf(sumVar / (float)WINDOW_SIZE, 2.0f);
-        float kurtosis = (denomKurt > EPSILON) ? ((sumKurt / (float)WINDOW_SIZE) / denomKurt) : 0.0f;
+        // Fitur 4: Intensitas Hentakan Akselerometer Dinamik (Heel-Strike Ground Impact RMS, skala %g)
+        // Menolak secara mutlak saku jaket dan ayunan tangan karena hentakan benturan tanah di dada/tangan mendekati nol
+        float sumDynAcc2 = 0.0f;
+        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
+            sumDynAcc2 += (accMagBuffer[i] * accMagBuffer[i]);
+        }
+        float impactRms = sqrtf(sumDynAcc2 / (float)WINDOW_SIZE);
+        float heelStrikeImpact = impactRms * 100.0f; // Skala 0 s.d. 100 %g (saku celana: ~35-80, saku jaket: <15)
 
-        // Salin nilai ke array fitur
+        // Salin ke array 5 fitur biometrik
         extractedFeatures[0] = mean;
         extractedFeatures[1] = variance;
-        extractedFeatures[2] = cadenceRegularity; // Konsistensi Irama Langkah (menggantikan StdDev)
-        extractedFeatures[3] = skewness;
-        extractedFeatures[4] = kurtosis;
+        extractedFeatures[2] = cadenceRegularity; // Konsistensi Irama (%)
+        extractedFeatures[3] = stridePeriod;      // Periode Langkah (sampel)
+        extractedFeatures[4] = heelStrikeImpact;  // Hentakan Kaki (%g)
     }
 };
 

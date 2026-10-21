@@ -117,7 +117,7 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
       },
       {
         label: "2. Log-Likelihood (LL - ln αT / t Length-Normalized)",
-        text: "Rata-rata probabilitas rantai transisi dan emisi Gaussian forward pass per langkah sepanjang 5 hidden states siklus melangkah. Menunjukkan seberapa wajar urutan fase langkah terhadap model secara adil dan stabil.",
+        text: "Rata-rata probabilitas logaritmik rantai transisi dan emisi Gaussian forward pass per langkah sepanjang 2 state tersembunyi (Dual-Phase: Fase Tumpuan / Stance vs Fase Ayunan / Swing). Menunjukkan seberapa wajar urutan fase langkah terhadap model secara adil dan stabil.",
         indicator: "Nilai negatif skala logaritma natural (ln) per jendela. Semakin mendekati 0 (semakin tidak negatif), semakin tinggi kecocokannya. Contoh: -15.5 jauh lebih cocok dibanding -35.0. Nilai di bawah basis ambang dinamis diidentifikasi sebagai langkah asing/anomali.",
       },
       {
@@ -126,29 +126,29 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
         indicator: "Bergerak dinamis mengikuti energi puncak langkah terakhir. Nilai Log-Likelihood langkah harus berada di atas ambang ini (LL ≥ Th) agar diakui sebagai langkah pemilik yang valid.",
       },
       {
-        label: "4. Vektor Ciri: Rata-Rata Dinamis (Mean - μ)",
-        text: "Nilai tengah akselerasi linier pada sumbu vertikal gravitasi saku setelah dikurangi gravitasi bumi murni (1.0g). Menggambarkan besaran ayunan naik-turun tubuh saat melangkah.",
-        indicator: "Mendekati 0.00g saat diam. Berkisar antara ±0.15g s.d. ±0.45g saat langkah kaki normal berayun. Nilai di luar rentang ini menandakan guncangan abnormal atau gerakan pasif.",
+        label: "4. Vektor Ciri: Rata-Rata Kecepatan Sudut (Mean Gyro - μ)",
+        text: "Nilai tengah magnitude kecepatan sudut rotasi saku saat paha berayun. Menggambarkan intensitas kecepatan putaran paha per jendela gerak secara invarian terhadap orientasi sensor.",
+        indicator: "Berkisar antara 40°/s s.d. 140°/s saat melangkah santai hingga wajar. Nilai di luar rentang ini menandakan gerakan pasif atau guncangan eksternal.",
       },
       {
-        label: "5. Vektor Ciri: Variansi Langkah (Variance - σ²)",
-        text: "Mengukur persebaran kuadratik dan intensitas tenaga hentakan kaki saat menapak tanah. Menentukan seberapa dinamis lonjakan energi langkah kaki.",
-        indicator: "Rentang tipikal 0.05 s.d. 0.35 pada kecepatan jalan santai. Nilai < 0.01 berarti kaki diam/gerakan pasif; nilai > 0.80 berarti hentakan lari kencang atau guncangan kendaraan.",
+        label: "5. Vektor Ciri: Variansi Putaran (Variance - σ²)",
+        text: "Mengukur persebaran kuadratik tenaga putaran gyro. Menentukan kontras dinamika antara fase ayun cepat dan fase tumpuan diam.",
+        indicator: "Rentang tipikal 400 s.d. 3500 (°/s)² pada jalan normal. Nilai < 100 berarti gerakan pasif / datar; nilai > 5000 menandakan putaran berlebihan atau lari kencang.",
       },
       {
-        label: "6. Vektor Ciri: Standar Deviasi (Std Dev - σ)",
-        text: "Akar kuadrat variansi yang menggambarkan konsistensi deviasi energi langkah kaki. Parameter ini menentukan lebar fungsi kepadatan probabilitas (PDF) Gaussian di tiap state GHMM.",
-        indicator: "Rentang tipikal 0.20g s.d. 0.60g. Semakin stabil ritme jalan seseorang, deviasi nilai σ antar-jendela akan semakin konstan.",
+        label: "6. Vektor Ciri: Keteraturan Irama Cadence (Cadence Regularity - R)",
+        text: "Puncak koefisien autokorelasi (R_peak) sinyal giroskop yang mengukur konsistensi periodisitas tempo langkah kaki antar-fase tumpuan.",
+        indicator: "Rentang tipikal 65% s.d. 95% pada langkah ritmis teratur. Nilai rendah (< 50%) menandakan langkah terhenti-henti, kaki tersandung, atau ayunan tangan acak.",
       },
       {
-        label: "7. Vektor Ciri: Kemiringan Kurva (Skewness - γ1)",
-        text: "Mengukur derajat asimetri kurva akselerasi antara fase dorongan tumit (heel-strike) dan fase ayunan kaki (swing phase). Menjadi ciri khas biomekanika unik tiap individu.",
-        indicator: "Nilai positif (> 0, misal +0.2 s.d. +1.5) menandakan hentakan tumit tajam ke atas; nilai negatif menandakan deselerasi kaki lambat. Tiap orang memiliki pola kemiringan kurva yang khas.",
+        label: "7. Vektor Ciri: Periode Siklus Langkah (Stride Period - k)",
+        text: "Indeks lag waktu autokorelasi (k_peak) dari siklus langkah kaki penuh. Mewakili frekuensi langkah alami yang berkorelasi langsung dengan panjang tungkai dan tinggi badan individu (biometrik fisik bawaan unik).",
+        indicator: "Rentang tipikal 45 s.d. 95 sampel @ 10ms (setara 0.45s s.d. 0.95s per langkah). Menggantikan skewness yang rentan derau kalkulasi.",
       },
       {
-        label: "8. Vektor Ciri: Keruncingan Puncak (Kurtosis - β2)",
-        text: "Mengukur ketajaman atau kelancipan lonjakan akselerasi sesaat pada saat tumit pertama kali kontak menapak permukaan lantai.",
-        indicator: "Normal Gaussian standar = 3.0. Nilai > 3.0 (leptokurtik, misal 3.2 - 6.0) berarti hentakan kaki tegas/keras; nilai < 3.0 (platikurtik) berarti ayunan kaki lentur dan melayang halus.",
+        label: "8. Vektor Ciri: Hentakan Kaki Dinamis (Heel-Strike Impact - Acc)",
+        text: "RMS akselerasi linier dinamis |acc - 1.0g| yang mengukur besaran gaya reaksi tanah (Ground Reaction Force) saat tumit menapak permukaan lantai yang merambat ke paha. Menjadi pembeda mutlak antara langkah kaki nyata vs guncangan saku jaket atau ayunan tangan.",
+        indicator: "Rentang tipikal 35 %g s.d. 85 %g saat melangkah di saku celana. Pada ayunan tangan atau saku jaket tanpa hentakan tanah, nilainya < 15 %g sehingga langsung ditolak oleh model.",
       },
       {
         label: "9. ZUPT (Zero Velocity Update - Filter Gerak Aktif)",
@@ -157,13 +157,13 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
       },
       {
         label: "10. Personalisasi Inkremental (Δ EMA)",
-        text: "Besaran koreksi pembaruan halus pada bobot model biometrik di flash memori via formula Exponential Moving Average (faktor pembobot α = 0.15).",
-        indicator: "Rentang koreksi tipikal ±0.001 s.d. ±0.025. Hanya aktif saat verifikasi sangat yakin (CIR ≥ 90.0%). Memungkinkan model beradaptasi otomatis terhadap perubahan berat badan, sepatu, atau gaya jalan tanpa merusak template dasar.",
+        text: "Besaran koreksi pembaruan halus pada nilai rata-rata (means) model biometrik di flash memori via formula Exponential Moving Average (faktor pembobot α = 0.10). Matriks kovarian dibekukan saat adaptasi agar ambang batas (threshold) tidak hanyut (drift).",
+        indicator: "Rentang koreksi tipikal ±0.001 s.d. ±0.025. Hanya aktif saat verifikasi sangat yakin (CIR ≥ 90.0%) DAN memiliki margin keunggulan bersih (Separation Margin ≥ 6.0%) terhadap slot pengguna lain untuk mencegah template poisoning.",
       },
       {
-        label: "11. Penyelarasan Sudut Saku (Roll & Pitch Offsets)",
-        text: "Proyeksi vektor gravitasi bumi statis untuk mentransformasikan orientasi lokal sensor IMU ke sumbu vertikal tubuh nyata.",
-        indicator: "Sudut Roll (-180° s.d. +180°) dan Pitch (-90° s.d. +90°). Berhasil dikunci otomatis dalam 500 ms pertama, membuat pengguna bebas meletakkan kunci miring, tegak, atau terbalik di dalam saku.",
+        label: "11. Kebebasan Orientasi Saku (100% Invarian Orientasi)",
+        text: "Ekstraksi fitur beroperasi murni pada magnitude skalar kecepatan sudut dan deviasi percepatan terhadap gravitasi (|acc - 1.0g|), menjamin kebal penuh terhadap rotasi fisik 3D.",
+        indicator: "Pengguna 100% bebas meletakkan kunci pintar dalam posisi apa pun di saku celana (tegak, miring, menyudut, maupun terbalik) tanpa memerlukan prosedur kalibrasi arah saku.",
       },
       {
         label: "12. Osiloskop Dual-Axis (Waveform 20 Hz Live BLE)",

@@ -651,13 +651,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       csv += `Slot Pengguna,${regRec?.slotUser || "Slot 1"}\r\nTotal Jendela Valid,${regRec?.totalJendela || 5}\r\nStatus Template,Tersimpan di Flash\r\n`;
     }
 
-    csv += `Mean (μ),${summaryMetrics.mean} g\r\nVariansi (σ²),${summaryMetrics.variance}\r\nStd Deviasi (σ),${summaryMetrics.stdDev} g\r\nSkewness (γ1),${summaryMetrics.skewness}\r\nKurtosis (β2),${summaryMetrics.kurtosis}\r\nDurasi Sesi,${summaryMetrics.durationSec} s\r\n\r\n`;
+    csv += `Mean Gyro (μ),${summaryMetrics.mean} dps\r\nVariansi Gyro (σ²),${summaryMetrics.variance}\r\nIrama Cadence (R),${summaryMetrics.stdDev} %\r\nPeriode Langkah (k),${summaryMetrics.skewness} smp\r\nHentakan Kaki (Acc),${summaryMetrics.kurtosis} %g\r\nDurasi Sesi,${summaryMetrics.durationSec} s\r\n\r\n`;
 
     if (parsedDetails.length > 0) {
       csv += "=== RINCIAN PER LANGKAH / JENDELA (GHMM TELEMETRI) ===\r\n";
       csv += isAuth
-        ? "Jendela,Waktu,Frekuensi_Hz,ZUPT_Status,Skor_CIR,Log_Likelihood,Mean_μ,Variansi_σ2,StdDev_σ,Skewness_γ1,Kurtosis_β2,Ambang_Th,Delta_EMA,Status\r\n"
-        : "Jendela,Waktu,Frekuensi_Hz,ZUPT_Status,Kuota_Progres,Mean_μ,Variansi_σ2,StdDev_σ,Skewness_γ1,Kurtosis_β2,Status_Template\r\n";
+        ? "Jendela,Waktu,Frekuensi_Hz,ZUPT_Status,Skor_CIR,Log_Likelihood,Mean_Gyro_dps,Variansi_Gyro,Cadence_R_persen,Periode_k_smp,Impact_Acc_persenG,Ambang_Th,Delta_EMA,Status\r\n"
+        : "Jendela,Waktu,Frekuensi_Hz,ZUPT_Status,Kuota_Progres,Mean_Gyro_dps,Variansi_Gyro,Cadence_R_persen,Periode_k_smp,Impact_Acc_persenG,Status_Template\r\n";
 
       parsedDetails.forEach((item, idx) => {
         if (isAuth) {
@@ -1206,13 +1206,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                     <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
                       <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem", textTransform: "uppercase" }}>
-                        Mean (μ)
+                        Mean Gyro (μ)
                       </p>
                       <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                        {summaryMetrics.mean} g
+                        {summaryMetrics.mean !== "—" ? `${summaryMetrics.mean} °/s` : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.46rem" }}>
-                        Tenaga Ayunan Kaki
+                        Rata-rata Putaran
                       </p>
                     </div>
 
@@ -1224,43 +1224,43 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                         {summaryMetrics.variance}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.46rem" }}>
-                        Sebaran Tenaga Langkah
+                        Dinamika Putaran
                       </p>
                     </div>
 
                     <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
                       <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem", textTransform: "uppercase" }}>
-                        Std Dev (σ)
+                        Cadence (R)
                       </p>
                       <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                        {summaryMetrics.stdDev} g
+                        {summaryMetrics.stdDev !== "—" ? `${summaryMetrics.stdDev}%` : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.46rem" }}>
-                        Konsistensi Irama
+                        Keteraturan Irama
                       </p>
                     </div>
 
                     <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
                       <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.5rem", textTransform: "uppercase" }}>
-                        Skewness (γ1)
+                        Periode (k)
                       </p>
                       <p style={{ color: "#0891B2", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                        {summaryMetrics.skewness}
+                        {summaryMetrics.skewness !== "—" ? `${summaryMetrics.skewness} smp` : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.46rem" }}>
-                        Asimetri Ayunan Kaki
+                        Lag Autokorelasi
                       </p>
                     </div>
 
                     <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs col-span-2 sm:col-span-1">
                       <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.5rem", textTransform: "uppercase" }}>
-                        Kurtosis (β2)
+                        Hentakan (Acc)
                       </p>
                       <p style={{ color: "#7C3AED", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                        {summaryMetrics.kurtosis}
+                        {summaryMetrics.kurtosis !== "—" ? `${summaryMetrics.kurtosis} %g` : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.46rem" }}>
-                        Hentakan Heel-Strike
+                        Ground Reaction Force
                       </p>
                     </div>
                   </div>
@@ -1355,10 +1355,10 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                             <td className="py-2.5 px-3 text-slate-700 align-top">
                               <div className="space-y-0.5">
                                 <p className="font-semibold text-slate-800">
-                                  μ: <span className="text-emerald-700">{item.mean ?? "—"}g</span> · σ²: <span>{item.variance ?? "—"}</span> · σ: <span>{item.stdDev ?? "—"}g</span>
+                                  μ: <span className="text-emerald-700">{item.mean ?? "—"}°/s</span> · σ²: <span>{item.variance ?? "—"}</span> · R: <span>{item.stdDev ?? "—"}%</span>
                                 </p>
                                 <p className="text-[0.55rem] text-slate-500">
-                                  Skewness (γ1): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"}</span> · Kurtosis (β2): <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"}</span>
+                                  Periode (k): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"} smp</span> · Hentakan: <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"} %g</span>
                                 </p>
                               </div>
                             </td>

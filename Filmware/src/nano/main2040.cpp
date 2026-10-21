@@ -38,8 +38,8 @@ CalibrationTarget calibTarget = CALIB_TARGET_TRAINING;
 void handleIncomingCommands();
 void processIdleState();
 void processCalibrationState();
-void processTrainingState(float gx, float gy, float gz);
-void processAuthenticationState(float gx, float gy, float gz);
+void processTrainingState(float ax, float ay, float az, float gx, float gy, float gz);
+void processAuthenticationState(float ax, float ay, float az, float gx, float gy, float gz);
 void reloadUsersFromFlash();
 
 void setup() {
@@ -128,11 +128,11 @@ void loop() {
                 break;
 
             case STATE_TRAINING:
-                processTrainingState(gx, gy, gz);
+                processTrainingState(ax, ay, az, gx, gy, gz);
                 break;
 
             case STATE_AUTHENTICATING:
-                processAuthenticationState(gx, gy, gz);
+                processAuthenticationState(ax, ay, az, gx, gy, gz);
                 break;
         }
     }
@@ -347,8 +347,8 @@ void processCalibrationState() {
 }
 
 // Fase Pendaftaran Mandiri On-Device (Edge Training 10 Jendela)
-void processTrainingState(float gx, float gy, float gz) {
-    bool windowComplete = featureExtractor.addSample(gx, gy, gz);
+void processTrainingState(float ax, float ay, float az, float gx, float gy, float gz) {
+    bool windowComplete = featureExtractor.addSample(ax, ay, az, gx, gy, gz);
 
     if (windowComplete) {
         bool isWalking = featureExtractor.evaluateZUPT();
@@ -417,8 +417,8 @@ void processTrainingState(float gx, float gy, float gz) {
 }
 
 // Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User & Adaptasi EMA)
-void processAuthenticationState(float gx, float gy, float gz) {
-    bool windowComplete = featureExtractor.addSample(gx, gy, gz);
+void processAuthenticationState(float ax, float ay, float az, float gx, float gy, float gz) {
+    bool windowComplete = featureExtractor.addSample(ax, ay, az, gx, gy, gz);
 
     if (windowComplete) {
         bool isWalking = featureExtractor.evaluateZUPT();
@@ -430,6 +430,8 @@ void processAuthenticationState(float gx, float gy, float gz) {
         int bestUserIdx = -1;
         float bestConfidence = -1.0f;
         float bestLogProb = -999.0f;
+        int runnerUpUserIdx = -1;
+        float runnerUpConfidence = -1.0f;
         float userScores[MAX_USERS];
         for (uint8_t i = 0; i < MAX_USERS; ++i) {
             userScores[i] = -1.0f;
@@ -453,9 +455,14 @@ void processAuthenticationState(float gx, float gy, float gz) {
                     float conf = ghmm[i].calculateConfidenceScore(logProb);
                     userScores[i] = conf;
                     if (conf > bestConfidence) {
+                        runnerUpConfidence = bestConfidence;
+                        runnerUpUserIdx = bestUserIdx;
                         bestConfidence = conf;
                         bestLogProb = logProb;
                         bestUserIdx = i;
+                    } else if (conf > runnerUpConfidence) {
+                        runnerUpConfidence = conf;
+                        runnerUpUserIdx = i;
                     }
                 }
             }
@@ -465,8 +472,11 @@ void processAuthenticationState(float gx, float gy, float gz) {
                 telem.confidenceScore = bestConfidence;
                 telem.adaptiveThreshold = ghmm[bestUserIdx].getAdaptiveThreshold();
 
-                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%)
-                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f) {
+                // Syarat Margin Separasi Juara 1 terhadap Juara 2 (minimal unggul 6% agar tidak tertukar/tercemar)
+                bool hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+
+                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%) serta margin bersih
+                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f && hasCleanMargin) {
                     float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
                     telem.emaDelta = deltaEMA;
                     // Perbarui data adaptif ke Flash memori internal
@@ -511,13 +521,32 @@ void processAuthenticationState(float gx, float gy, float gz) {
                 ble.sendDoorCommand(scoresMsg);
                 delay(40);
 
-                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD) {
+                // Cek Margin Separasi Juara 1 terhadap Juara 2
+                bool hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+
+                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && hasCleanMargin) {
                     Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
-                    Serial.println(activeUsers[bestUserIdx].userName);
+                    Serial.print(activeUsers[bestUserIdx].userName);
+                    Serial.print(F(" (Skor: "));
+                    Serial.print(bestConfidence);
+                    Serial.print(F("%, Runner-up: "));
+                    Serial.print(runnerUpConfidence);
+                    Serial.println(F("%)"));
 
                     char doorMsg[32];
                     snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
                     ble.sendDoorCommand(doorMsg);
+                } else if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && !hasCleanMargin) {
+                    Serial.print(F("[AUTH AMBIGU] Akses Ditolak: Skor bersaing ketat antara Slot "));
+                    Serial.print(bestUserIdx);
+                    Serial.print(F(" ("));
+                    Serial.print(bestConfidence);
+                    Serial.print(F("%) dan Slot "));
+                    Serial.print(runnerUpUserIdx);
+                    Serial.print(F(" ("));
+                    Serial.print(runnerUpConfidence);
+                    Serial.println(F("%)"));
+                    ble.sendDoorCommand("ACCESS_DENIED");
                 } else {
                     Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));
                     ble.sendDoorCommand("ACCESS_DENIED");

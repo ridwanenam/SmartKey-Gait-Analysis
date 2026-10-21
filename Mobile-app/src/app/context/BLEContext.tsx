@@ -517,8 +517,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       }
 
       const scoreStr = `${confidenceScore.toFixed(1)}%`;
-      const vectorStr = `[${mean.toFixed(2)}, ${variance.toFixed(2)}, ${stdDev.toFixed(2)}]`;
-      const covStr = `[${skewness.toFixed(2)}, ${kurtosis.toFixed(2)}]`;
+      const vectorStr = `[${mean.toFixed(1)}°/s, ${variance.toFixed(0)}, ${stdDev.toFixed(1)}%]`;
+      const covStr = `[${skewness.toFixed(0)} smp, ${kurtosis.toFixed(1)} %g]`;
       const deltaStr = (emaDelta >= 0 ? "+" : "") + emaDelta.toFixed(2);
 
       const authStatus = displayProgress >= 5

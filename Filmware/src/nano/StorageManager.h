@@ -49,25 +49,7 @@ public:
         size_t actualSize = 0;
         int res = kv_get(key, &model, sizeof(UserModel), &actualSize);
 
-        if (res == 0 && (actualSize == sizeof(UserModel) || actualSize == sizeof(UserModel) - sizeof(float))) {
-            if (actualSize == sizeof(UserModel) - sizeof(float)) {
-                model.baselineLogProb = BASE_LOG_THRESHOLD;
-            }
-            // Auto-upgrade: Pastikan transMat memiliki probabilitas latar belakang semi-ergodik (0.05) untuk profil lama
-            for (uint8_t i = 0; i < NUM_STATES; ++i) {
-                float rowSum = 0.0f;
-                for (uint8_t j = 0; j < NUM_STATES; ++j) {
-                    if (i != j && j != (i + 1) % NUM_STATES && model.transMat[i][j] < 0.01f) {
-                        model.transMat[i][j] = 0.05f;
-                    }
-                    rowSum += model.transMat[i][j];
-                }
-                if (rowSum > EPSILON && fabsf(rowSum - 1.0f) > 0.01f) {
-                    for (uint8_t j = 0; j < NUM_STATES; ++j) {
-                        model.transMat[i][j] /= rowSum;
-                    }
-                }
-            }
+        if (res == 0 && actualSize == sizeof(UserModel)) {
             Serial.print(F("[STORAGE] Muat User Slot "));
             Serial.print(slotIndex);
             Serial.print(F(" ("));
