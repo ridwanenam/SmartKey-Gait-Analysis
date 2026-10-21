@@ -334,13 +334,13 @@ export function AuthScanPanel({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
                 <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Kalibrasi Saku (0.5s)
+                  Orientasi Saku
                 </p>
-                <p style={{ color: isScanning ? "#16A34A" : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning ? (telemetry?.zupt?.includes("Menyelaraskan") ? "MENYELARASKAN..." : "TERKUNCI OTOMATIS") : "SIAGA"}
+                <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  100% BEBAS
                 </p>
                 <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Sudut Roll (φ) & Pitch (θ)
+                  Invarian Orientasi Murni
                 </p>
               </div>
 

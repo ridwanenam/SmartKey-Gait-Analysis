@@ -18,18 +18,12 @@ private:
     float accMagBuffer[WINDOW_SIZE];
     uint16_t bufferIndex;
 
-    // Komponen offset dynamic online calibration
-    float rollOffset;
-    float pitchOffset;
-
 public:
     FeatureExtraction() 
         : kalmanGx(0.001f, 0.002f, 0.001f),
           kalmanGy(0.001f, 0.002f, 0.001f),
           kalmanGz(0.001f, 0.002f, 0.001f),
-          bufferIndex(0),
-          rollOffset(0.0f),
-          pitchOffset(0.0f) {}
+          bufferIndex(0) {}
 
     // Reset buffer total (misal saat berhenti melangkah / ZUPT diam)
     void resetBuffer() {
@@ -46,12 +40,6 @@ public:
         memmove(&gyroBuffer[0][0], &gyroBuffer[step][0], remaining * 3 * sizeof(float));
         memmove(&accMagBuffer[0], &accMagBuffer[step], remaining * sizeof(float));
         bufferIndex = remaining;
-    }
-
-    // Set nilai offset kemiringan hasil Online Calibration 5 detik awal
-    void setOrientationOffsets(float roll, float pitch) {
-        rollOffset = roll;
-        pitchOffset = pitch;
     }
 
     // Memasukkan 1 sampel data mentah IMU (akselerometer & giroskop), menyaring noise via Kalman, dan menyimpan ke buffer

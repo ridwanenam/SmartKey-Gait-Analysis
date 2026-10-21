@@ -478,14 +478,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       }
 
       // Tentukan teks status ZUPT secara deskriptif untuk UI dan Log
-      let zuptStatusStr = "Still (Discarded)";
-      if (zuptCode === 2) {
-        zuptStatusStr = "Menyelaraskan Posisi Saku...";
-      } else if (zuptCode === 3) {
-        zuptStatusStr = "Sensor Siap (Silakan Berjalan)";
-      } else if (isZUPTValid) {
-        zuptStatusStr = "Valid (Active Gait)";
-      }
+      const zuptStatusStr = isZUPTValid ? "Valid (Active Gait)" : "Still (Discarded)";
 
       // Jaga agar progres tidak turun saat langkah diam terdeteksi
       if (windowIndex > lastProgress.current) {
@@ -523,7 +516,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
       const authStatus = displayProgress >= 5
         ? (confidenceScore >= 80.0 ? "success" : "failed")
-        : (displayProgress > 0 ? "scanning" : (zuptCode === 2 ? "scanning" : "idle"));
+        : (displayProgress > 0 ? "scanning" : "idle");
 
       const newBleData: BLEData = {
         score: scoreStr,

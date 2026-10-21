@@ -21,23 +21,10 @@ float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 
 // Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms)
 unsigned long previousSampleTime = 0;
-unsigned long calibrationStartTime = 0;
-unsigned long lastCalibNotifyTime = 0;
-
-// Variabel Akumulator Online Calibration (500 ms)
-float sumAccX = 0.0f, sumAccY = 0.0f, sumAccZ = 0.0f;
-uint16_t calibSampleCount = 0;
-
-enum CalibrationTarget {
-    CALIB_TARGET_TRAINING,
-    CALIB_TARGET_AUTH
-};
-CalibrationTarget calibTarget = CALIB_TARGET_TRAINING;
 
 // Deklarasi Prototip Fungsi Internal
 void handleIncomingCommands();
 void processIdleState();
-void processCalibrationState();
 void processTrainingState(float ax, float ay, float az, float gx, float gy, float gz);
 void processAuthenticationState(float ax, float ay, float az, float gx, float gy, float gz);
 void reloadUsersFromFlash();
@@ -89,7 +76,7 @@ void loop() {
         static unsigned long lastLiveSampleTime = 0;
         if (currentMillis - lastLiveSampleTime >= 50) {
             lastLiveSampleTime = currentMillis;
-            if (ble.isConnected() && (currentState == STATE_AUTHENTICATING || currentState == STATE_TRAINING || currentState == STATE_CALIBRATING)) {
+            if (ble.isConnected() && (currentState == STATE_AUTHENTICATING || currentState == STATE_TRAINING)) {
                 // Hitung magnitudo akselerasi dan hilangkan komponen gravitasi bumi 1.0g
                 float accMag = sqrtf(ax * ax + ay * ay + az * az);
                 float dynAcc = accMag - 1.0f; // 0.0g saat diam
@@ -116,15 +103,6 @@ void loop() {
         switch (currentState) {
             case STATE_IDLE:
                 processIdleState();
-                break;
-
-            case STATE_CALIBRATING:
-                // Akumulasi data akselerometer untuk estimasi kemiringan awal saku
-                sumAccX += ax;
-                sumAccY += ay;
-                sumAccZ += az;
-                calibSampleCount++;
-                processCalibrationState();
                 break;
 
             case STATE_TRAINING:
@@ -187,24 +165,18 @@ void handleIncomingCommands() {
             }
 
             if (currentSlotTarget < MAX_USERS) {
-                calibTarget = CALIB_TARGET_TRAINING;
-                sumAccX = sumAccY = sumAccZ = 0.0f;
-                calibSampleCount = 0;
-                calibrationStartTime = millis();
-                lastCalibNotifyTime = millis();
-                currentState = STATE_CALIBRATING;
                 validWindowCounter = 0;
                 featureExtractor.resetBuffer();
+                currentState = STATE_TRAINING;
 
-                // Segera kirim sinyal ke Mobile App: Status 2 = Penyelarasan Posisi Saku Cepat (500ms)
                 TelemetryData telem;
                 memset(&telem, 0, sizeof(TelemetryData));
                 telem.windowIndex = 0;
-                telem.isZUPTValid = 2; // 2 = Calibrating Pocket Otomatis
+                telem.isZUPTValid = 0;
                 telem.confidenceScore = 0.0f;
                 ble.sendTelemetry(telem);
 
-                Serial.print(F("[STATE] Memulai Penyelarasan Saku Otomatis 500ms untuk Registrasi Slot "));
+                Serial.print(F("[STATE] Memulai Registrasi Langkah (Invarian Orientasi) Slot "));
                 Serial.print(currentSlotTarget);
                 Serial.print(F(" ("));
                 Serial.print(targetUserName);
@@ -218,23 +190,16 @@ void handleIncomingCommands() {
                 ghmm[i].resetInference();
             }
             validWindowCounter = 0;
-
-            // Masuk ke Kalibrasi Cepat 500ms otomatis sebelum autentikasi
-            calibTarget = CALIB_TARGET_AUTH;
-            sumAccX = sumAccY = sumAccZ = 0.0f;
-            calibSampleCount = 0;
-            calibrationStartTime = millis();
-            lastCalibNotifyTime = millis();
-            currentState = STATE_CALIBRATING;
+            currentState = STATE_AUTHENTICATING;
 
             TelemetryData telem;
             memset(&telem, 0, sizeof(TelemetryData));
             telem.windowIndex = 0;
-            telem.isZUPTValid = 2; // 2 = Calibrating Pocket Otomatis
+            telem.isZUPTValid = 0;
             telem.confidenceScore = 0.0f;
             ble.sendTelemetry(telem);
 
-            Serial.println(F("[STATE] Memulai Penyelarasan Saku Otomatis 500ms untuk Autentikasi..."));
+            Serial.println(F("[STATE] Memulai Autentikasi Langkah (Invarian Orientasi)..."));
         }
         // Perintah Batalkan Sesi Aktif
         else if (strcmp(cmd, "CANCEL") == 0) {
@@ -305,45 +270,6 @@ void handleIncomingCommands() {
 
 void processIdleState() {
     // Mode siaga daya rendah
-}
-
-// Fase Kalibrasi Saku Cepat Otomatis (500 ms)
-void processCalibrationState() {
-    unsigned long now = millis();
-    unsigned long elapsed = now - calibrationStartTime;
-
-    if (elapsed >= CALIBRATION_DURATION_MS) {
-        if (calibSampleCount > 0) {
-            float meanAx = sumAccX / (float)calibSampleCount;
-            float meanAy = sumAccY / (float)calibSampleCount;
-            float meanAz = sumAccZ / (float)calibSampleCount;
-
-            // Rumus Trigonometri Roll (phi) dan Pitch (theta)
-            float roll  = atan2f(meanAy, sqrtf(meanAx * meanAx + meanAz * meanAz));
-            float pitch = atan2f(-meanAx, sqrtf(meanAy * meanAy + meanAz * meanAz));
-
-            featureExtractor.setOrientationOffsets(roll, pitch);
-        }
-
-        featureExtractor.resetBuffer();
-        validWindowCounter = 0;
-
-        if (calibTarget == CALIB_TARGET_AUTH) {
-            currentState = STATE_AUTHENTICATING;
-            Serial.println(F("[STATE] Penyelarasan Saku 500ms Selesai -> Siap Autentikasi Langkah"));
-        } else {
-            currentState = STATE_TRAINING;
-            Serial.println(F("[STATE] Penyelarasan Saku 500ms Selesai -> Siap Registrasi Langkah"));
-        }
-
-        // Beritahu Mobile App bahwa kalibrasi selesai (isZUPTValid = 3) dan siap melangkah
-        TelemetryData telem;
-        memset(&telem, 0, sizeof(TelemetryData));
-        telem.windowIndex = 0;
-        telem.isZUPTValid = 3; // 3 = Selesai Kalibrasi, Mulai Melangkah
-        telem.confidenceScore = 0.0f;
-        ble.sendTelemetry(telem);
-    }
 }
 
 // Fase Pendaftaran Mandiri On-Device (Edge Training 10 Jendela)

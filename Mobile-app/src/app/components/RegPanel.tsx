@@ -18,7 +18,6 @@ const SANS = "Inter, sans-serif";
 export function RegPanel({ isScanning, progress, total, telemetry, liveSample = null, isDevMode = false }: RegPanelProps) {
   const pct = Math.round((progress / total) * 100);
   const allDone = progress >= total;
-  const isCalib = telemetry?.zupt?.includes("Kalibrasi") ?? false;
 
   return (
     <div className="flex flex-col gap-3">
@@ -107,8 +106,8 @@ export function RegPanel({ isScanning, progress, total, telemetry, liveSample = 
                 </div>
               </motion.div>
 
-              <p className="mt-1.5" style={{ color: allDone ? "#16A34A" : isCalib ? "#D97706" : "#64748B", fontFamily: SANS, fontSize: "0.75rem", fontWeight: 600 }}>
-                {isCalib ? telemetry?.zupt : (allDone ? `${total}/${total} Jendela Terpenuhi!` : "Langkah Terdeteksi")}
+              <p className="mt-1.5" style={{ color: allDone ? "#16A34A" : "#64748B", fontFamily: SANS, fontSize: "0.75rem", fontWeight: 600 }}>
+                {allDone ? `${total}/${total} Jendela Terpenuhi!` : "Langkah Terdeteksi"}
               </p>
 
               {/* Circular-ish progress dots */}
@@ -131,14 +130,12 @@ export function RegPanel({ isScanning, progress, total, telemetry, liveSample = 
                 ))}
               </div>
 
-              <p className="mt-4" style={{ color: allDone ? "#16A34A" : isCalib ? "#D97706" : "#94A3B8", fontFamily: MONO, fontSize: "0.62rem", fontWeight: allDone ? 700 : 500 }}>
-                {isCalib 
-                  ? "Penyelarasan Posisi Saku Otomatis (0.5s) · Bersiap Melangkah..." 
-                  : (allDone 
-                    ? "100% Selesai · Menyimpan Profil GHMM ke Flash..." 
-                    : (!telemetry?.isZUPTValid && progress > 0 
-                      ? "Diam terdeteksi · Silakan terus berjalan secara alami" 
-                      : `${pct}% selesai · Terus berjalan secara alami`))}
+              <p className="mt-4" style={{ color: allDone ? "#16A34A" : "#94A3B8", fontFamily: MONO, fontSize: "0.62rem", fontWeight: allDone ? 700 : 500 }}>
+                {allDone 
+                  ? "100% Selesai · Menyimpan Profil GHMM ke Flash..." 
+                  : (!telemetry?.isZUPTValid && progress > 0 
+                    ? "Diam terdeteksi · Silakan terus berjalan secara alami" 
+                    : `${pct}% selesai · Terus berjalan secara alami`)}
               </p>
             </>
           ) : (
@@ -321,13 +318,13 @@ export function RegPanel({ isScanning, progress, total, telemetry, liveSample = 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
                 <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Kalibrasi Saku (0.5s)
+                  Orientasi Saku
                 </p>
-                <p style={{ color: isScanning ? "#16A34A" : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning ? (isCalib ? "MENYELARASKAN..." : "TERKUNCI OTOMATIS") : "SIAGA"}
+                <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
+                  100% BEBAS
                 </p>
                 <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Roll (φ) & Pitch (θ)
+                  Invarian Orientasi Murni
                 </p>
               </div>
 

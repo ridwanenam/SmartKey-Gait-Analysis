@@ -11,7 +11,6 @@ constexpr uint32_t IMU_SAMPLE_INTERVAL_MS = 10;                     // 100 Hz = 
 constexpr uint16_t WINDOW_SIZE       = 150;                          // 1.5 detik x 100 Hz (Panjang Jendela)
 constexpr uint16_t WINDOW_STEP       = 75;                           // 50% Overlap (0.75 detik per pergeseran sliding window)
 constexpr uint8_t  TARGET_WINDOWS    = 5;                            // Syarat kuota 5 jendela valid (~4.5 detik total)
-constexpr uint32_t CALIBRATION_DURATION_MS = 500;                   // 500 ms (0.5 detik) Online Calibration awal otomatis
 
 // ==========================================
 // 2. PARAMETER ZUPT & PENAPISAN STATISTIK
@@ -45,7 +44,6 @@ constexpr float   CONFIDENCE_HIGH_THRESHOLD = 80.0f;                 // Ambang b
 // ==========================================
 enum SystemState {
     STATE_IDLE,
-    STATE_CALIBRATING,
     STATE_TRAINING,
     STATE_AUTHENTICATING
 };
