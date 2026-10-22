@@ -25,12 +25,12 @@ private:
 
     // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
     static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean Gyro (~50-65 deg/s) -> var floor 36.0f (std ~6.0 deg/s)
-        // Feature 1: Variance Gyro (~1200-2000 deg^2/s^2) -> var floor 15000.0f (std ~122 deg^2/s^2)
-        // Feature 2: Cadence Regularity (~65-85%) -> var floor 50.0f (std ~7.1%)
-        // Feature 3: Stride Period (~45-75 sampel) -> var floor 16.0f (std ~4.0 sampel)
-        // Feature 4: Heel-Strike Impact (~35-70 %g) -> var floor 25.0f (std ~5.0 %g)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 36.0f, 15000.0f, 50.0f, 16.0f, 25.0f };
+        // Feature 0: Mean Gyro (~50-100 deg/s) -> var floor 25.0f (std ~5.0 deg/s)
+        // Feature 1: StdDev Gyro (~20-45 deg/s) -> var floor 25.0f (std ~5.0 deg/s)
+        // Feature 2: Cadence Regularity (~60-90%) -> var floor 36.0f (std ~6.0%)
+        // Feature 3: Step Period (~45-70 smp) -> var floor 25.0f (std ~5.0 smp = 50ms toleransi)
+        // Feature 4: Heel-Strike Impact (~30-70 %g) -> var floor 25.0f (std ~5.0 %g)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 25.0f, 25.0f, 36.0f, 25.0f, 25.0f };
         return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 
@@ -43,9 +43,14 @@ private:
             float floorVal = getVarianceFloor(d);
             float var = (covars[d] < floorVal) ? floorVal : covars[d];
             float diff = features[d] - means[d];
+            float mahalanobisSq = (diff * diff) / var;
             
-            // Formula Gaussian: -0.5 * ln(2 * pi * var) - (diff^2 / (2 * var))
-            float term = -0.5f * (logf(2.0f * (float)M_PI * var) + ((diff * diff) / var));
+            // Robust loss: batasi penalti kuadrat per dimensi (maks 12.0f = ~3.5 sigma)
+            // Ini mencegah 1 glitch atau anomali sesaat langsung menjatuhkan log likelihood ke nilai minus ekstrem
+            if (mahalanobisSq > 12.0f) mahalanobisSq = 12.0f;
+            
+            // Formula Gaussian: -0.5 * ln(2 * pi * var) - 0.5 * mahalanobisSq
+            float term = -0.5f * (logf(2.0f * (float)M_PI * var) + mahalanobisSq);
             logProb += term;
         }
         return logProb;
@@ -237,15 +242,15 @@ public:
         
         float dynamicTh = averagePeak * 1.25f; // Margin toleransi 25%
 
-        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 3.8)
-        // Ini mencegah jalan cepat / anomali menurunkan threshold dan lolos secara tidak sengaja
-        float hardFloorTh = baseLL - 3.8f;
+        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 5.5)
+        // Menjaga agar toleransi adaptif tidak melar berlebihan saat anomali
+        float hardFloorTh = baseLL - 5.5f;
         if (dynamicTh < hardFloorTh) {
             dynamicTh = hardFloorTh;
         }
-        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 1.5) agar langkah normal tetap nyaman lolos
-        if (dynamicTh > baseLL - 1.5f) {
-            dynamicTh = baseLL - 1.5f;
+        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 1.0) agar langkah normal pengguna sah tetap nyaman lolos
+        if (dynamicTh > baseLL - 1.0f) {
+            dynamicTh = baseLL - 1.0f;
         }
 
         currentAdaptiveThreshold = dynamicTh;

@@ -650,17 +650,17 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     csv += "=== PERBANDINGAN PARAMETER KINEMATIKA 5D (AGGREGATE) ===\r\n";
     csv += "Parameter,Base_Referensi,Head_Kandidat,Delta_Selisih,Batas_Toleransi,Status\r\n";
     csv += `Rerata_Mean_Gyro_dps,${base5D.mean},${head5D.mean},${deltas.dMean},±18.0dps,${Math.abs(deltas.dMean) <= 18.0 ? "VALID" : "DEVIASI"}\r\n`;
-    csv += `Varians_Gyro_Variance,${base5D.variance},${head5D.variance},${deltas.dVar},±450.0,${Math.abs(deltas.dVar) <= 450.0 ? "VALID" : "DEVIASI"}\r\n`;
+    csv += `Deviasi_Gyro_dps,${base5D.variance},${head5D.variance},${deltas.dVar},±15.0dps,${Math.abs(deltas.dVar) <= 15.0 ? "VALID" : "DEVIASI"}\r\n`;
     csv += `Keteraturan_Cadence_Persen,${base5D.stdDev},${head5D.stdDev},${deltas.dStd},±15.0%,${Math.abs(deltas.dStd) <= 15.0 ? "VALID" : "DEVIASI"}\r\n`;
     csv += `Periode_Langkah_smp,${base5D.skewness},${head5D.skewness},${deltas.dSkew},±10smp,${Math.abs(deltas.dSkew) <= 10.0 ? "VALID" : "DEVIASI"}\r\n`;
     csv += `Hentakan_Kaki_Impact_PersenG,${base5D.kurtosis},${head5D.kurtosis},${deltas.dKurt},±18.0%g,${Math.abs(deltas.dKurt) <= 18.0 ? "VALID" : "DEVIASI"}\r\n\r\n`;
 
     csv += "=== RINCIAN KOMPARASI JENDELA DEMI JENDELA (1 s.d. 5) ===\r\n";
-    csv += "Jendela,Base_Mean,Head_Mean,Base_Var,Head_Var,Base_ZUPT,Head_ZUPT\r\n";
+    csv += "Jendela,Base_Mean,Head_Mean,Base_Deviasi,Head_Deviasi,Base_Cadence,Head_Cadence,Base_Periode,Head_Periode,Base_Hentakan,Head_Hentakan,Base_ZUPT,Head_ZUPT\r\n";
     for (let i = 0; i < 5; i++) {
       const bStep = baseParsed.steps[i];
       const hStep = headParsed.steps[i];
-      csv += `${i + 1},${bStep?.mean ?? "—"},${hStep?.mean ?? "—"},${bStep?.variance ?? "—"},${hStep?.variance ?? "—"},${bStep?.zupt ?? "VALID"},${hStep?.zupt ?? "VALID"}\r\n`;
+      csv += `${i + 1},${bStep?.mean ?? "—"},${hStep?.mean ?? "—"},${bStep?.variance ?? "—"},${hStep?.variance ?? "—"},${bStep?.stdDev ?? "—"},${hStep?.stdDev ?? "—"},${bStep?.skewness ?? "—"},${hStep?.skewness ?? "—"},${bStep?.kurtosis ?? "—"},${hStep?.kurtosis ?? "—"},${bStep?.zupt ?? "VALID"},${hStep?.zupt ?? "VALID"}\r\n`;
     }
 
     await ExportService.exportCSV(filename, csv);
@@ -802,12 +802,12 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           tol: 18.0,
         },
         {
-          name: "Varians Gyro (σ²)",
-          unit: "",
-          base: base5D.variance.toFixed(0),
-          head: head5D.variance.toFixed(0),
+          name: "Deviasi Gyro (σ)",
+          unit: "°/s",
+          base: base5D.variance.toFixed(1),
+          head: head5D.variance.toFixed(1),
           delta: deltas.dVar,
-          tol: 450.0,
+          tol: 15.0,
         },
         {
           name: "Cadence (R)",
@@ -818,15 +818,15 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           tol: 15.0,
         },
         {
-          name: "Periode Langkah",
-          unit: "ms",
-          base: base5D.skewness.toFixed(1),
-          head: head5D.skewness.toFixed(1),
+          name: "Periode Langkah (k)",
+          unit: "smp",
+          base: base5D.skewness.toFixed(0),
+          head: head5D.skewness.toFixed(0),
           delta: deltas.dSkew,
           tol: 10.0,
         },
         {
-          name: "Kurtosis Puncak",
+          name: "Hentakan Kaki (acc)",
           unit: "%g",
           base: base5D.kurtosis.toFixed(1),
           head: head5D.kurtosis.toFixed(1),
@@ -1199,78 +1199,105 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
         ctx.fillStyle = "#38BDF8";
         ctx.font = "bold 8px monospace";
-        ctx.fillText("BASE TEMPLATE", scX + 10, scY + 52);
+        ctx.fillText("BASE TEMPLATE", scX + 8, scY + 46);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.font = "8px monospace";
-        ctx.fillText("Gyro (μ):", scX + 10, scY + 66);
+        ctx.font = "7.5px monospace";
+        ctx.fillText("Gyro (μ):", scX + 8, scY + 58);
         ctx.fillStyle = "#F8FAFC";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText(`${bStep?.mean ?? "75.0"} °/s`, scX + 68, scY + 66);
+        ctx.font = "bold 8px monospace";
+        ctx.fillText(`${bStep?.mean ?? "75.0"} °/s`, scX + 66, scY + 58);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("Varians:", scX + 10, scY + 80);
+        ctx.fillText("Deviasi (σ):", scX + 8, scY + 69);
         ctx.fillStyle = "#F8FAFC";
-        ctx.fillText(`${bStep?.variance ?? "1200"}`, scX + 68, scY + 80);
+        ctx.fillText(`${bStep?.variance ?? "25.0"} °/s`, scX + 66, scY + 69);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("Cadence:", scX + 10, scY + 94);
+        ctx.fillText("Cadence (R):", scX + 8, scY + 80);
         ctx.fillStyle = "#F8FAFC";
-        ctx.fillText(`${bStep?.stdDev ?? "85.0"} %`, scX + 68, scY + 94);
+        ctx.fillText(`${bStep?.stdDev ?? "85.0"} %`, scX + 66, scY + 80);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("ZUPT:", scX + 10, scY + 108);
+        ctx.fillText("Periode (k):", scX + 8, scY + 91);
+        ctx.fillStyle = "#F8FAFC";
+        ctx.fillText(`${bStep?.skewness ?? "55"} smp`, scX + 66, scY + 91);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.fillText("Hentakan:", scX + 8, scY + 102);
+        ctx.fillStyle = "#F8FAFC";
+        ctx.fillText(`${bStep?.kurtosis ?? "45.0"} %g`, scX + 66, scY + 102);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.fillText("ZUPT:", scX + 8, scY + 113);
         ctx.fillStyle = "#34D399";
-        ctx.fillText("VALID", scX + 68, scY + 108);
+        ctx.fillText("VALID", scX + 66, scY + 113);
 
         ctx.strokeStyle = "#1E293B";
         ctx.beginPath();
-        ctx.moveTo(scX + 8, scY + 120);
-        ctx.lineTo(scX + stepCardW - 8, scY + 120);
+        ctx.moveTo(scX + 8, scY + 119);
+        ctx.lineTo(scX + stepCardW - 8, scY + 119);
         ctx.stroke();
 
         ctx.fillStyle = "#FB923C";
         ctx.font = "bold 8px monospace";
-        ctx.fillText("HEAD SESI UJI", scX + 10, scY + 134);
+        ctx.fillText("HEAD SESI UJI", scX + 8, scY + 131);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.font = "8px monospace";
-        ctx.fillText("Gyro (μ):", scX + 10, scY + 148);
+        ctx.font = "7.5px monospace";
+        ctx.fillText("Gyro (μ):", scX + 8, scY + 143);
         ctx.fillStyle = "#F8FAFC";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText(`${hStep?.mean ?? "78.0"} °/s`, scX + 68, scY + 148);
+        ctx.font = "bold 8px monospace";
+        ctx.fillText(`${hStep?.mean ?? "78.0"} °/s`, scX + 66, scY + 143);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("Varians:", scX + 10, scY + 162);
+        ctx.fillText("Deviasi (σ):", scX + 8, scY + 154);
         ctx.fillStyle = "#F8FAFC";
-        ctx.fillText(`${hStep?.variance ?? "1350"}`, scX + 68, scY + 162);
+        ctx.fillText(`${hStep?.variance ?? "28.0"} °/s`, scX + 66, scY + 154);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("Cadence:", scX + 10, scY + 176);
+        ctx.fillText("Cadence (R):", scX + 8, scY + 165);
         ctx.fillStyle = "#F8FAFC";
-        ctx.fillText(`${hStep?.stdDev ?? "82.0"} %`, scX + 68, scY + 176);
+        ctx.fillText(`${hStep?.stdDev ?? "82.0"} %`, scX + 66, scY + 165);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.fillText("Periode (k):", scX + 8, scY + 176);
+        ctx.fillStyle = "#F8FAFC";
+        ctx.fillText(`${hStep?.skewness ?? "58"} smp`, scX + 66, scY + 176);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.fillText("Hentakan:", scX + 8, scY + 187);
+        ctx.fillStyle = "#F8FAFC";
+        ctx.fillText(`${hStep?.kurtosis ?? "48.0"} %g`, scX + 66, scY + 187);
 
         const isHeadStepFail = hStep?.status === "FAILED";
         ctx.fillStyle = "#94A3B8";
-        ctx.fillText("ZUPT:", scX + 10, scY + 190);
+        ctx.fillText("ZUPT:", scX + 8, scY + 198);
         ctx.fillStyle = isHeadStepFail ? "#F87171" : "#34D399";
-        ctx.fillText(isHeadStepFail ? "FAIL" : "VALID", scX + 68, scY + 190);
+        ctx.fillText(isHeadStepFail ? "FAIL" : "VALID", scX + 66, scY + 198);
 
         const dGyro = hMean - bMean;
         const dBoxY = scY + 206;
-        drawRoundRect(scX + 8, dBoxY, stepCardW - 16, 56, 4, "#040711", "#1E293B", 1);
+        drawRoundRect(scX + 6, dBoxY, stepCardW - 12, 64, 4, "#040711", "#1E293B", 1);
 
         ctx.fillStyle = "#64748B";
         ctx.font = "7px monospace";
-        ctx.fillText("DELTA GYRO (HEAD-BASE)", scX + 12, dBoxY + 14);
+        ctx.fillText("DELTA (HEAD-BASE)", scX + 10, dBoxY + 13);
 
         ctx.fillStyle = Math.abs(dGyro) <= 18 ? "#34D399" : "#F87171";
-        ctx.font = "bold 11px monospace";
-        ctx.fillText(`${dGyro > 0 ? "+" : ""}${dGyro.toFixed(1)} °/s`, scX + 12, dBoxY + 30);
+        ctx.font = "bold 9px monospace";
+        ctx.fillText(`Δ Gyro: ${dGyro > 0 ? "+" : ""}${dGyro.toFixed(1)} °/s`, scX + 10, dBoxY + 27);
+
+        const bPer = parseFloat(String(bStep?.skewness ?? "55"));
+        const hPer = parseFloat(String(hStep?.skewness ?? "55"));
+        const dPer = hPer - bPer;
+        ctx.fillStyle = Math.abs(dPer) <= 10 ? "#38BDF8" : "#FB923C";
+        ctx.font = "bold 8px monospace";
+        ctx.fillText(`Δ Lag k: ${dPer > 0 ? "+" : ""}${dPer.toFixed(0)} smp`, scX + 10, dBoxY + 41);
 
         ctx.fillStyle = "#94A3B8";
-        ctx.font = "7px monospace";
-        ctx.fillText(`Likelihood: ${hStep?.logLikelihood ?? "-2.4"}`, scX + 12, dBoxY + 46);
+        ctx.font = "7.5px monospace";
+        ctx.fillText(`Likelihood: ${hStep?.logLikelihood ?? "-2.4"}`, scX + 10, dBoxY + 55);
       }
 
       // 5. Footer Bar Bawah (x: 20, y: 818, w: 1240, h: 28)

@@ -26,7 +26,7 @@ constexpr uint8_t MAX_USERS          = 5;                            // Kapasita
 constexpr uint8_t NUM_STATES         = 2;                            // Jumlah hidden states siklus melangkah (Dual-Phase: Kaki Kanan vs Kiri)
 constexpr uint8_t NUM_FEATURES       = 5;                            // 5 Fitur: Mean, Var, Stride Regularity, Stride Period (k_peak), Heel-Strike Impact
 constexpr float   EMA_ALPHA          = 0.10f;                        // Smoothing factor pembaruan inkremental konservatif
-constexpr float   BASE_LOG_THRESHOLD = -25.0f;                       // Ambang batas dasar log-likelihood ternormalisasi (Length-Normalized LL)
+constexpr float   BASE_LOG_THRESHOLD = -20.0f;                       // Ambang batas dasar log-likelihood ternormalisasi (Length-Normalized LL)
 constexpr float   CONFIDENCE_HIGH_THRESHOLD = 80.0f;                 // Ambang batas CIR minimal lolos akses (%)
 
 // ==========================================

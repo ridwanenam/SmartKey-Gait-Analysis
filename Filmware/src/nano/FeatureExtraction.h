@@ -127,24 +127,42 @@ public:
             sumVar += (diff * diff);
         }
 
-        // Fitur 1: Variansi Sinyal Gyro (deg^2/s^2)
+        // Fitur 1: Standar Deviasi Dinamis Sinyal Gyro (deg/s)
+        // Menggantikan variansi mentah (deg^2/s^2) agar besaran fitur berada di rentang puluhan deg/s 
+        // dan tidak memicu ledakan kuadrat jarak Mahalanobis di GHMM
         float variance = sumVar / (float)(WINDOW_SIZE - 1);
+        float gyroStdDev = sqrtf(fmaxf(0.0f, variance));
 
-        // Fitur 2 & Fitur 3: Keteraturan Irama Langkah & Periode Langkah Sejati (Stride Lag / k_peak)
-        // Dihitung dari autokorelasi sinyal fisik kontinu asli (rentang lag k = 35 s.d. 115 sampel = 0.35s s.d. 1.15s)
+        // Fitur 2 & Fitur 3: Keteraturan Irama Langkah (Cadence Regularity) & Periode Langkah Sejati (Lag k)
+        // Menggunakan Koefisien Korelasi Pearson Zero-Mean per Slice pada rentang langkah tunggal (40 s.d. 75 sampel = 0.40s s.d. 0.75s per langkah)
+        // Mencegah 'Octave Jumping' (lonjakan ke langkah ganda >100 sampel) dan mengeliminasi distorsi pergeseran DC offset
         float maxAutocorr = 0.0f;
-        uint8_t bestLag = 55; // Nilai default tengah
+        uint8_t bestLag = 55; // Nilai default ritme normal (~109 langkah/menit)
         if (sumVar > EPSILON) {
-            for (uint8_t k = 35; k <= 115; ++k) {
-                float sumCross = 0.0f;
-                for (uint16_t i = 0; i < WINDOW_SIZE - k; ++i) {
-                    sumCross += ((rawMag[i] - mean) * (rawMag[i + k] - mean));
+            for (uint8_t k = 40; k <= 75; ++k) {
+                uint16_t m = WINDOW_SIZE - k;
+                float sumX = 0.0f, sumY = 0.0f;
+                for (uint16_t i = 0; i < m; ++i) {
+                    sumX += rawMag[i];
+                    sumY += rawMag[i + k];
                 }
-                // Koreksi rasio overlap (WINDOW_SIZE / (WINDOW_SIZE - k))
-                float r = (sumCross * ((float)WINDOW_SIZE / (float)(WINDOW_SIZE - k))) / sumVar;
-                if (r > maxAutocorr) {
-                    maxAutocorr = r;
-                    bestLag = k;
+                float meanX = sumX / (float)m;
+                float meanY = sumY / (float)m;
+                float cross = 0.0f, varX = 0.0f, varY = 0.0f;
+                for (uint16_t i = 0; i < m; ++i) {
+                    float dx = rawMag[i] - meanX;
+                    float dy = rawMag[i + k] - meanY;
+                    cross += (dx * dy);
+                    varX += (dx * dx);
+                    varY += (dy * dy);
+                }
+                float denom = sqrtf(varX * varY);
+                if (denom > EPSILON) {
+                    float r = cross / denom;
+                    if (r > maxAutocorr) {
+                        maxAutocorr = r;
+                        bestLag = k;
+                    }
                 }
             }
         }
@@ -154,8 +172,7 @@ public:
         // Fitur 2: Konsistensi Irama Langkah (0.0% s.d. 100.0%)
         float cadenceRegularity = maxAutocorr * 100.0f;
 
-        // Fitur 3: Periode Langkah Sejati (Dominant Stride Period, satuan: jumlah sampel @ 10ms)
-        // Sidik jari biometrik anatomi (panjang kaki / ritme motorik) yang membedakan antar pengguna
+        // Fitur 3: Periode Langkah Sejati (Dominant Step Period, rentang 40 s.d. 75 sampel @ 10ms = 400 s.d. 750 ms)
         float stridePeriod = (float)bestLag;
 
         // Fitur 4: Intensitas Hentakan Akselerometer Dinamik (Heel-Strike Ground Impact RMS, skala %g)
@@ -167,9 +184,9 @@ public:
         float impactRms = sqrtf(sumDynAcc2 / (float)WINDOW_SIZE);
         float heelStrikeImpact = impactRms * 100.0f; // Skala 0 s.d. 100 %g (saku celana: ~35-80, saku jaket: <15)
 
-        // Salin ke array 5 fitur biometrik
+        // Salin ke array 5 fitur biometrik ortogonal
         extractedFeatures[0] = mean;
-        extractedFeatures[1] = variance;
+        extractedFeatures[1] = gyroStdDev;       // Simpangan Baku Ayunan (deg/s)
         extractedFeatures[2] = cadenceRegularity; // Konsistensi Irama (%)
         extractedFeatures[3] = stridePeriod;      // Periode Langkah (sampel)
         extractedFeatures[4] = heelStrikeImpact;  // Hentakan Kaki (%g)
