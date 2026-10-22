@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Arduino_LSM6DSOX.h>
+#include <mbed.h>
 #include "Config.h"
 #include "StorageManager.h"
 #include "FeatureExtraction.h"
@@ -48,10 +49,17 @@ void setup() {
         while (1);
     }
 
-    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode)"));
+    // 4. Inisialisasi Hardware Watchdog Timer (Timeout: 5000 ms / 5 detik)
+    // Jika sistem mengalami freeze/hang karena alasan apapun, hardware RP2040 otomatis reboot dalam sekejap (<0.5 detik)
+    mbed::Watchdog::get_instance().start(5000);
+
+    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode) + WDT Active"));
 }
 
 void loop() {
+    // 0. Segarkan Hardware Watchdog Timer di setiap iterasi normal (Heartbeat)
+    mbed::Watchdog::get_instance().kick();
+
     // 1. Polling Event Komunikasi BLE
     ble.poll();
     handleIncomingCommands();
@@ -113,6 +121,12 @@ void loop() {
                 processAuthenticationState(ax, ay, az, gx, gy, gz);
                 break;
         }
+    }
+
+    // 5. Jeda Perlindungan Bus SPI & Pencegahan Deadlock Nina-W102 saat Idle
+    // Mencegah looping 133 MHz membanjiri buffer komunikasi modul radio BLE
+    if (currentState == STATE_IDLE) {
+        delay(2);
     }
 }
 

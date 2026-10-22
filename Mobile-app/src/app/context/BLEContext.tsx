@@ -63,6 +63,7 @@ interface BLEContextType {
   liveSample: LiveSample | null;
   logs: LogEntry[];
   connect: () => Promise<void>;
+  autoConnect: () => Promise<void>;
   disconnect: () => void;
   sendCommand: (cmd: string) => Promise<boolean>;
   addLog: (entry: Omit<LogEntry, "id" | "timestamp">) => void;
@@ -136,6 +137,12 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   const lastAuthStatus = useRef<string>("idle");
   const lastProgress = useRef<number>(0);
   const sessionStartTime = useRef<number>(0);
+
+  // Status & Timer Auto-Reconnect Cerdas
+  const manualDisconnectRef = useRef<boolean>(false);
+  const isAutoConnectingRef = useRef<boolean>(false);
+  const autoConnectTimerRef = useRef<any>(null);
+  const autoConnectRef = useRef<() => Promise<void>>(async () => {});
   const currentSessionWaveform = useRef<Array<{
     t: number;
     val: number;
@@ -238,6 +245,17 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     setConnectionState("disconnected");
     setDeviceId(null);
     addLog({ type: "system", status: "Info", message: "Terputus dari Smart Key" });
+
+    // Jika bukan pemutusan manual oleh pengguna, jadwalkan auto-reconnect dalam 3 detik
+    if (!manualDisconnectRef.current) {
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = setTimeout(() => {
+        addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Smart Key..." });
+        if (autoConnectRef.current) {
+          autoConnectRef.current();
+        }
+      }, 3000);
+    }
   }, [addLog]);
 
   const logAuthSession = useCallback((decision: "SUCCESS" | "FAILED", userName?: string) => {
@@ -610,7 +628,148 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     }
   }, [verifiedUserName]);
 
+  const setupNotificationsForDevice = async (targetDeviceId: string) => {
+    // 1. Setup Notifications untuk Telemetri Data
+    await BleClient.startNotifications(
+      targetDeviceId,
+      SMART_KEY_SERVICE_UUID,
+      DATA_CHARACTERISTIC_UUID,
+      handleDataNotification
+    );
+
+    // 2. Setup Notifications untuk Sinyal Kontrol Pintu (OPEN_DOOR / ACCESS_DENIED)
+    try {
+      await BleClient.startNotifications(
+        targetDeviceId,
+        SMART_KEY_SERVICE_UUID,
+        DOOR_CHARACTERISTIC_UUID,
+        handleDoorNotification
+      );
+    } catch (doorErr) {
+      console.log("Door notification optional fallback:", doorErr);
+    }
+
+    // 3. Setup Notifications untuk 20 Hz Live Waveform Data (Pure Real Data)
+    try {
+      await BleClient.startNotifications(
+        targetDeviceId,
+        SMART_KEY_SERVICE_UUID,
+        LIVE_CHARACTERISTIC_UUID,
+        handleLiveNotification
+      );
+    } catch (liveErr) {
+      console.log("Live 20Hz notification optional fallback:", liveErr);
+    }
+  };
+
+  const performConnection = async (targetDevice: { deviceId: string; name?: string }) => {
+    addLog({ type: "system", status: "Info", message: `Menghubungkan ke ${targetDevice.name || "Smart Key"}...` });
+    await BleClient.connect(targetDevice.deviceId, (id) => onDisconnected(id));
+    await setupNotificationsForDevice(targetDevice.deviceId);
+
+    localStorage.setItem("smartkey_last_device_id", targetDevice.deviceId);
+    if (targetDevice.name) {
+      localStorage.setItem("smartkey_last_device_name", targetDevice.name);
+    }
+
+    setDeviceId(targetDevice.deviceId);
+    setConnectionState("connected");
+    manualDisconnectRef.current = false;
+    addLog({ type: "system", status: "Success", message: "Berhasil terhubung ke Smart Key" });
+  };
+
+  const autoConnect = useCallback(async () => {
+    if (connectionState === "connected" || isAutoConnectingRef.current || manualDisconnectRef.current) {
+      return;
+    }
+
+    try {
+      isAutoConnectingRef.current = true;
+      await BleClient.initialize();
+
+      const lastId = localStorage.getItem("smartkey_last_device_id");
+      const lastName = localStorage.getItem("smartkey_last_device_name") || "SmartKey_Wearable";
+
+      // 1. Coba koneksi langsung ke ID perangkat terakhir yang pernah terhubung
+      if (lastId) {
+        try {
+          console.log("[BLE AUTO] Mencoba direct-connect ke:", lastId);
+          setConnectionState("connecting");
+          await performConnection({ deviceId: lastId, name: lastName });
+          isAutoConnectingRef.current = false;
+          return;
+        } catch (directErr) {
+          console.log("[BLE AUTO] Direct connect gagal, beralih ke scan...", directErr);
+        }
+      }
+
+      // 2. Scan latar belakang untuk mencari perangkat dengan Service UUID SmartKey
+      console.log("[BLE AUTO] Memulai background scan...");
+      setConnectionState("connecting");
+      let foundDevice: { deviceId: string; name?: string } | null = null;
+
+      await BleClient.requestLEScan(
+        { services: [SMART_KEY_SERVICE_UUID] },
+        async (result) => {
+          if (!foundDevice && result.device) {
+            const devName = result.device.name || result.localName || "";
+            if (devName.includes("SmartKey") || result.device.deviceId === lastId || !devName) {
+              foundDevice = {
+                deviceId: result.device.deviceId,
+                name: devName || "SmartKey_Wearable",
+              };
+              try {
+                await BleClient.stopLEScan();
+              } catch (_) {}
+              try {
+                await performConnection(foundDevice);
+              } catch (connErr) {
+                console.error("[BLE AUTO] Gagal konek ke scan result:", connErr);
+                setConnectionState("disconnected");
+              }
+            }
+          }
+        }
+      );
+
+      // Batasi scan latar belakang maks 6 detik agar hemat baterai
+      setTimeout(async () => {
+        try {
+          await BleClient.stopLEScan();
+        } catch (_) {}
+        if (!foundDevice && connectionState !== "connected") {
+          setConnectionState("disconnected");
+        }
+        isAutoConnectingRef.current = false;
+      }, 6000);
+
+    } catch (err) {
+      console.log("[BLE AUTO] Error auto connect:", err);
+      setConnectionState("disconnected");
+      isAutoConnectingRef.current = false;
+    }
+  }, [connectionState, onDisconnected]);
+
+  // Pasang reference autoConnect untuk callback onDisconnected
+  useEffect(() => {
+    autoConnectRef.current = autoConnect;
+  }, [autoConnect]);
+
+  // Auto-connect saat aplikasi pertama kali dibuka (jeda 1.5 detik setelah inisialisasi awal)
+  useEffect(() => {
+    const startupTimer = setTimeout(() => {
+      autoConnect();
+    }, 1500);
+
+    return () => {
+      clearTimeout(startupTimer);
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+    };
+  }, [autoConnect]);
+
   const connect = async () => {
+    manualDisconnectRef.current = false;
+    if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
     try {
       setConnectionState("connecting");
       addLog({ type: "system", status: "Info", message: "Mencari Perangkat Bluetooth..." });
@@ -621,45 +780,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         services: [SMART_KEY_SERVICE_UUID],
       });
       
-      addLog({ type: "system", status: "Info", message: "Menghubungkan ke Perangkat..." });
-      await BleClient.connect(selectedDevice.deviceId, (id) => onDisconnected(id));
-      
-      // Setup Notifications untuk Telemetri Data
-      await BleClient.startNotifications(
-        selectedDevice.deviceId,
-        SMART_KEY_SERVICE_UUID,
-        DATA_CHARACTERISTIC_UUID,
-        handleDataNotification
-      );
-
-      // Setup Notifications untuk Sinyal Kontrol Pintu (OPEN_DOOR / ACCESS_DENIED)
-      try {
-        await BleClient.startNotifications(
-          selectedDevice.deviceId,
-          SMART_KEY_SERVICE_UUID,
-          DOOR_CHARACTERISTIC_UUID,
-          handleDoorNotification
-        );
-      } catch (doorErr) {
-        console.log("Door notification optional fallback:", doorErr);
-      }
-
-      // Setup Notifications untuk 20 Hz Live Waveform Data (Pure Real Data)
-      try {
-        await BleClient.startNotifications(
-          selectedDevice.deviceId,
-          SMART_KEY_SERVICE_UUID,
-          LIVE_CHARACTERISTIC_UUID,
-          handleLiveNotification
-        );
-      } catch (liveErr) {
-        console.log("Live 20Hz notification optional fallback:", liveErr);
-      }
-      
-      setDeviceId(selectedDevice.deviceId);
-      setConnectionState("connected");
-      addLog({ type: "system", status: "Success", message: "Berhasil terhubung ke Smart Key" });
-      
+      await performConnection(selectedDevice);
     } catch (error) {
       console.error(error);
       setConnectionState("disconnected");
@@ -668,6 +789,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   };
 
   const disconnect = useCallback(async () => {
+    manualDisconnectRef.current = true;
+    if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
     if (deviceId) {
       try {
         await BleClient.disconnect(deviceId);
@@ -675,7 +798,10 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         console.error(err);
       }
     }
-  }, [deviceId]);
+    setConnectionState("disconnected");
+    setDeviceId(null);
+    addLog({ type: "system", status: "Info", message: "Koneksi diputus secara manual" });
+  }, [deviceId, addLog]);
 
   const sendCommand = async (cmd: string): Promise<boolean> => {
     if (!deviceId) {
@@ -744,6 +870,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       liveSample,
       logs,
       connect,
+      autoConnect,
       disconnect,
       sendCommand,
       addLog,

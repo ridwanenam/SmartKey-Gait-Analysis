@@ -27,6 +27,13 @@ public:
         memset(lastReceivedCommand, 0, sizeof(lastReceivedCommand));
     }
 
+    static void onBleDisconnected(BLEDevice central) {
+        Serial.print(F("[BLE] Terputus dari Ponsel: "));
+        Serial.println(central.address());
+        BLE.advertise();
+        Serial.println(F("[BLE] Auto Re-Advertising Dinyalakan Kembali"));
+    }
+
     // Inisialisasi GATT Server & Karakteristik BLE
     bool begin() {
         if (!BLE.begin()) {
@@ -44,6 +51,10 @@ public:
         gaitService.addCharacteristic(txLiveChar);
 
         BLE.addService(gaitService);
+
+        // Daftarkan event listener agar otomatis advertise ulang saat ponsel terputus
+        BLE.setEventHandler(BLEDisconnected, onBleDisconnected);
+
         BLE.advertise();
 
         return true;
@@ -52,6 +63,16 @@ public:
     // Melakukan polling event BLE secara non-blocking
     void poll() {
         BLE.poll();
+
+        // Penjaga Auto-Advertising: Pastikan beacon BLE tetap mengudara saat belum terhubung
+        if (!BLE.connected()) {
+            static unsigned long lastAdvCheck = 0;
+            unsigned long now = millis();
+            if (now - lastAdvCheck >= 3000) {
+                lastAdvCheck = now;
+                BLE.advertise();
+            }
+        }
 
         // Cek apakah ada string perintah masuk dari Mobile App
         if (rxCmdChar.written()) {
