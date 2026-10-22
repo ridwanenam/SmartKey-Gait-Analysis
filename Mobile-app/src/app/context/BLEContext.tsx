@@ -737,8 +737,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         try {
           await BleClient.stopLEScan();
         } catch (_) {}
-        if (!foundDevice && connectionState !== "connected") {
-          setConnectionState("disconnected");
+        if (!foundDevice) {
+          setConnectionState((prev) => (prev === "connected" ? prev : "disconnected"));
         }
         isAutoConnectingRef.current = false;
       }, 6000);
