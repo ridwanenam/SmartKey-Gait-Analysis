@@ -249,6 +249,26 @@ class DatabaseService {
     }
   }
 
+  public async updateAuthLogUserId(id: string, newUserId: string): Promise<boolean> {
+    await this.initialize();
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(
+        `UPDATE log_autentikasi SET user_id = ? WHERE id = ?;`,
+        [newUserId, id]
+      );
+      return true;
+    } else {
+      const logs: AuthLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_autentikasi') || '[]');
+      const target = logs.find(l => l.id === id);
+      if (target) {
+        target.userId = newUserId;
+        localStorage.setItem('sqlite_log_autentikasi', JSON.stringify(logs));
+        return true;
+      }
+      return false;
+    }
+  }
+
   public async getAuthLogs(limit = 100): Promise<AuthLogRecord[]> {
     await this.initialize();
     if (Capacitor.isNativePlatform() && this.db) {

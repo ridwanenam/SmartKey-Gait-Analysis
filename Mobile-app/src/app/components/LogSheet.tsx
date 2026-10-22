@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Download, Trash2, RefreshCw, Eye, HardDrive, ShieldCheck } from "lucide-react";
+import { X, Download, Trash2, RefreshCw, Eye, HardDrive, ShieldCheck, Pencil } from "lucide-react";
 import {
   databaseService,
   AuthLogRecord,
@@ -146,6 +146,32 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
+  };
+
+  // Ganti / Rename User ID untuk riwayat log autentikasi
+  const handleRenameAuthLog = async (rec: AuthLogRecord) => {
+    const currentName = rec.userId || "Unknown / Rejected";
+    const newName = window.prompt(
+      `Ganti label / User ID sesi ini:\n(Waktu: ${rec.timestamp}, Skor: ${rec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
+      currentName
+    );
+    if (!newName || !newName.trim() || newName.trim() === currentName) return;
+
+    const trimmed = newName.trim();
+    try {
+      await databaseService.updateAuthLogUserId(rec.id, trimmed);
+      setAuthLogs((prev) =>
+        prev.map((a) => (a.id === rec.id ? { ...a, userId: trimmed } : a))
+      );
+      addLog({
+        type: "system",
+        status: "Info",
+        message: `Label User ID autentikasi diubah menjadi "${trimmed}".`,
+      });
+    } catch (err) {
+      console.error("Gagal update user id log:", err);
+      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Hapus single row slot registrasi
@@ -487,7 +513,17 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                                 {renderTimestamp(r.timestamp)}
                               </td>
                               <td className="px-3 py-2.5" style={{ color: "#1E293B", fontSize: "0.62rem", fontWeight: 600 }}>
-                                {r.userId}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate max-w-[130px]">{r.userId}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRenameAuthLog(r)}
+                                    className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 active:scale-95 transition-all cursor-pointer"
+                                    title="Ganti nama/label User ID sesi ini"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                </div>
                               </td>
                               <td className="px-3 py-2.5" style={{ color: "#2563EB", fontSize: "0.62rem", fontWeight: 700 }}>
                                 {r.score !== undefined && r.score !== null ? (String(r.score).endsWith("%") ? r.score : `${r.score}%`) : "—"}

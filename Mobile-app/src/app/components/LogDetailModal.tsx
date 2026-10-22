@@ -27,6 +27,7 @@ import {
   Users,
   HardDrive,
   Smartphone,
+  Pencil,
 } from "lucide-react";
 import { AuthLogRecord, RegLogRecord, databaseService, UserProfile } from "../services/databaseService";
 import { ExportService } from "../services/exportService";
@@ -73,6 +74,33 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
   const isAuth = type === "autentikasi";
   const authRec = isAuth ? (record as AuthLogRecord) : null;
   const regRec = !isAuth ? (record as RegLogRecord) : null;
+
+  const [currentAuthUser, setCurrentAuthUser] = useState<string>(authRec?.userId || "");
+  useEffect(() => {
+    if (authRec?.userId) {
+      setCurrentAuthUser(authRec.userId);
+    }
+  }, [authRec?.userId]);
+
+  const handleRenameAuthRecord = async () => {
+    if (!authRec) return;
+    const currentName = currentAuthUser || authRec.userId || "Unknown / Rejected";
+    const newName = window.prompt(
+      `Ganti label / User ID sesi ini:\n(Waktu: ${authRec.timestamp}, Skor: ${authRec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
+      currentName
+    );
+    if (!newName || !newName.trim() || newName.trim() === currentName) return;
+
+    const trimmed = newName.trim();
+    try {
+      await databaseService.updateAuthLogUserId(authRec.id, trimmed);
+      setCurrentAuthUser(trimmed);
+      authRec.userId = trimmed;
+    } catch (err) {
+      console.error("Gagal update user id log:", err);
+      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   // State Zoom & Pan untuk Osiloskop Interaktif
   const [zoom, setZoom] = useState<number>(1.0);
@@ -720,9 +748,21 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                   {isAuth ? <ShieldCheck size={18} /> : <UserCheck size={18} />}
                 </div>
                 <div>
-                  <h3 style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.95rem" }}>
-                    {isAuth ? "Rincian Autentikasi Biometrik Gait" : "Rincian Perekaman Template Gait"}
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <h3 style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.95rem" }}>
+                      {isAuth ? (currentAuthUser || authRec?.userId || "Sesi Autentikasi") : "Rincian Perekaman Template Gait"}
+                    </h3>
+                    {isAuth && (
+                      <button
+                        type="button"
+                        onClick={handleRenameAuthRecord}
+                        className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 active:scale-95 transition-all cursor-pointer"
+                        title="Ganti nama/label User ID sesi ini"
+                      >
+                        <Pencil size={12} />
+                      </button>
+                    )}
+                  </div>
                   <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem" }}>
                     ID: {record.id} · {record.timestamp}
                   </p>

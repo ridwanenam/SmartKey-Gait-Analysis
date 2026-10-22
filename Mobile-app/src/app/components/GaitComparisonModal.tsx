@@ -22,6 +22,7 @@ import {
   HardDrive,
   Users,
   Camera,
+  Pencil,
 } from "lucide-react";
 import {
   databaseService,
@@ -179,6 +180,33 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
   const currentHead = useMemo(() => {
     return authRecords.find((a) => a.id === selectedAuthId);
   }, [authRecords, selectedAuthId]);
+
+  // Rename User ID untuk sesi Head autentikasi aktif
+  const handleRenameHeadUser = async () => {
+    if (!currentHead) return;
+    const currentName = currentHead.userId || "Unknown / Rejected";
+    const newName = window.prompt(
+      `Ganti label / User ID untuk sesi Head ini:\n(Waktu: ${currentHead.timestamp}, Skor: ${currentHead.score ?? "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
+      currentName
+    );
+    if (!newName || !newName.trim() || newName.trim() === currentName) return;
+
+    const trimmed = newName.trim();
+    try {
+      await databaseService.updateAuthLogUserId(currentHead.id, trimmed);
+      setAuthRecords((prev) =>
+        prev.map((a) => (a.id === currentHead.id ? { ...a, userId: trimmed } : a))
+      );
+      addLog({
+        type: "system",
+        status: "Info",
+        message: `Label User ID sesi ${currentHead.id.substring(0, 8)} diubah menjadi "${trimmed}".`,
+      });
+    } catch (err) {
+      console.error("Gagal update user id sesi:", err);
+      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   // Helper parser JSON rekaman
   const parseRecordDetails = useCallback((detailsStr?: string) => {
@@ -973,6 +1001,47 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
       drawRoundRect(ox, oy, ow, oh, 6, "#040711", "#1E293B", 1);
 
+      // Hitung skala adaptif dinamis dari seluruh titik Base dan Head (fleksibel mengikuti energi rotasi dan akselerasi)
+      const baseWf = baseParsed.waveform;
+      const headWf = headParsed.waveform;
+      const maxT = 7.5;
+      const allPoints = [...baseWf, ...headWf];
+
+      // 1. Skala Adaptif Akselerasi (g)
+      let peakAcc = 1.0;
+      allPoints.forEach((p) => {
+        const a = Math.abs(p.val);
+        if (a > peakAcc) peakAcc = a;
+      });
+      // Headroom 25% agar puncak gelombang tidak menyentuh plafon
+      const yLimitAcc = Math.max(1.5, Math.ceil(peakAcc * 1.25 * 10) / 10);
+
+      // 2. Skala Adaptif Giroskop
+      let peakGyro = 4.0;
+      allPoints.forEach((p) => {
+        if (p.energy > peakGyro) peakGyro = p.energy;
+      });
+      const rawGyroLimit = peakGyro * 1.25;
+      let yLimitGyro = 4.0;
+      if (rawGyroLimit < 6.0) {
+        yLimitGyro = 5.0;
+      } else if (rawGyroLimit < 50.0) {
+        yLimitGyro = Math.ceil(rawGyroLimit / 5) * 5;
+      } else if (rawGyroLimit < 200.0) {
+        yLimitGyro = Math.ceil(rawGyroLimit / 20) * 20;
+      } else if (rawGyroLimit < 1000.0) {
+        yLimitGyro = Math.ceil(rawGyroLimit / 100) * 100;
+      } else {
+        yLimitGyro = Math.ceil(rawGyroLimit / 500) * 500;
+      }
+
+      const formatGyroLabel = (val: number) => {
+        if (val >= 1000) {
+          return val % 1000 === 0 ? `${val / 1000}k` : `${(val / 1000).toFixed(1)}k`;
+        }
+        return val.toFixed(val < 10 ? 1 : 0);
+      };
+
       for (let s = 1; s <= 4; s++) {
         const gx = ox + (s / 5) * ow;
         ctx.strokeStyle = "#172554";
@@ -995,11 +1064,15 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.lineTo(ox + ow, gy);
         ctx.stroke();
 
-        const accLabel = `${(2.0 - g * 0.5).toFixed(1)}g`;
+        // Label Accel Kiri Dinamis (yLimitAcc s.d. 0.0g)
+        const accVal = yLimitAcc * (1 - g / 4);
+        const accLabel = `${accVal.toFixed(1)}g`;
         ctx.fillStyle = "#38BDF8";
-        ctx.fillText(accLabel, ox - 32, gy + 3);
+        ctx.fillText(accLabel, ox - 34, gy + 3);
 
-        const gyroLabel = `${(4.0 - g * 1.0).toFixed(1)}`;
+        // Label Gyro Kanan Dinamis (yLimitGyro s.d. 0)
+        const gyroVal = yLimitGyro * (1 - g / 4);
+        const gyroLabel = formatGyroLabel(gyroVal);
         ctx.fillStyle = "#C084FC";
         ctx.fillText(gyroLabel, ox + ow + 8, gy + 3);
       }
@@ -1010,10 +1083,6 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         const labelX = ox + (wIdx / 5) * ow + ow / 10 - 24;
         ctx.fillText(`JENDELA ${wIdx + 1} (${(wIdx * 1.5).toFixed(1)}s)`, labelX, oy + oh - 8);
       }
-
-      const baseWf = baseParsed.waveform;
-      const headWf = headParsed.waveform;
-      const maxT = 7.5;
 
       const drawWaveformCurve = (
         wf: typeof baseWf,
@@ -1038,7 +1107,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           if (p.t > maxT) return;
           const px = ox + (p.t / maxT) * ow;
           const val = type === "accel" ? p.val : p.energy;
-          const maxVal = type === "accel" ? 2.0 : 4.0;
+          const maxVal = type === "accel" ? yLimitAcc : yLimitGyro;
           const py = oy + oh - Math.max(0, Math.min(maxVal, val)) * (oh / maxVal);
 
           if (!started) {
@@ -1350,9 +1419,22 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                     HEAD REF (Sesi Uji Autentikasi)
                   </span>
                 </div>
-                <span style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.55rem" }}>
-                  {authRecords.length} Sesi di Log
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRenameHeadUser}
+                    disabled={!currentHead}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.55rem] font-semibold text-orange-200 bg-orange-950/80 hover:bg-orange-900 border border-orange-700 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    style={{ fontFamily: MONO }}
+                    title="Ganti nama/label User ID sesi ini (misal: 'jalan biasa', 'jalan agak cepat', 'tangan ngayun')"
+                  >
+                    <Pencil size={9} className="text-orange-400" />
+                    <span>Rename</span>
+                  </button>
+                  <span style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.55rem" }}>
+                    {authRecords.length} Sesi di Log
+                  </span>
+                </div>
               </div>
 
               <select
