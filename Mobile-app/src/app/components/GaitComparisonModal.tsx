@@ -1057,22 +1057,33 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       ctx.font = "8px monospace";
       for (let g = 0; g <= 4; g++) {
         const gy = oy + (g / 4) * oh;
-        ctx.strokeStyle = "#0F172A";
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = g === 2 ? "rgba(56, 189, 248, 0.35)" : "#0F172A";
+        ctx.lineWidth = g === 2 ? 1.5 : 1;
         ctx.beginPath();
         ctx.moveTo(ox, gy);
         ctx.lineTo(ox + ow, gy);
         ctx.stroke();
 
-        // Label Accel Kiri Dinamis (yLimitAcc s.d. 0.0g)
-        const accVal = yLimitAcc * (1 - g / 4);
-        const accLabel = `${accVal.toFixed(1)}g`;
-        ctx.fillStyle = "#38BDF8";
-        ctx.fillText(accLabel, ox - 34, gy + 3);
+        // Label Accel Kiri Dinamis (0.0g tepat di tengah)
+        let accLabel: string;
+        if (g === 0) accLabel = `+${yLimitAcc.toFixed(1)}g`;
+        else if (g === 1) accLabel = `+${(yLimitAcc * 0.5).toFixed(1)}g`;
+        else if (g === 2) accLabel = ` 0.0g`;
+        else if (g === 3) accLabel = `-${(yLimitAcc * 0.5).toFixed(1)}g`;
+        else accLabel = `-${yLimitAcc.toFixed(1)}g`;
 
-        // Label Gyro Kanan Dinamis (yLimitGyro s.d. 0)
-        const gyroVal = yLimitGyro * (1 - g / 4);
-        const gyroLabel = formatGyroLabel(gyroVal);
+        ctx.fillStyle = g === 2 ? "#38BDF8" : "#0284C7";
+        ctx.fillText(accLabel, ox - 38, gy + 3);
+
+        // Label Gyro Kanan Dinamis (0.0 di dasar bawah)
+        let gyroVal: number;
+        if (g === 0) gyroVal = yLimitGyro;
+        else if (g === 1) gyroVal = yLimitGyro * 0.75;
+        else if (g === 2) gyroVal = yLimitGyro * 0.5;
+        else if (g === 3) gyroVal = yLimitGyro * 0.25;
+        else gyroVal = 0;
+
+        const gyroLabel = g === 4 ? "0.0" : formatGyroLabel(gyroVal);
         ctx.fillStyle = "#C084FC";
         ctx.fillText(gyroLabel, ox + ow + 8, gy + 3);
       }
@@ -1106,9 +1117,17 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         wf.forEach((p) => {
           if (p.t > maxT) return;
           const px = ox + (p.t / maxT) * ow;
-          const val = type === "accel" ? p.val : p.energy;
-          const maxVal = type === "accel" ? yLimitAcc : yLimitGyro;
-          const py = oy + oh - Math.max(0, Math.min(maxVal, val)) * (oh / maxVal);
+
+          let py: number;
+          if (type === "accel") {
+            // Normalisasi rentang -yLimitAcc s.d. +yLimitAcc (0.0g di tengah)
+            const normY = (p.val + yLimitAcc) / (2 * yLimitAcc);
+            py = oy + oh - Math.min(Math.max(normY, 0), 1) * oh;
+          } else {
+            // Normalisasi rentang 0 s.d. yLimitGyro (0.0 di dasar bawah)
+            const normY = Math.max(0, p.energy) / yLimitGyro;
+            py = oy + oh - Math.min(Math.max(normY, 0), 1) * oh;
+          }
 
           if (!started) {
             ctx.moveTo(px, py);
