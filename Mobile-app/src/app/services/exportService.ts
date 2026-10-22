@@ -49,4 +49,44 @@ export class ExportService {
       return false;
     }
   }
+
+  public static async exportImage(filename: string, base64DataUrl: string): Promise<boolean> {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const rawBase64 = base64DataUrl.replace(/^data:image\/[a-z]+;base64,/, "");
+        const writeResult = await Filesystem.writeFile({
+          path: filename,
+          data: rawBase64,
+          directory: Directory.Documents,
+        });
+
+        try {
+          const canShareRes = await Share.canShare();
+          if (canShareRes.value) {
+            await Share.share({
+              title: filename,
+              text: `Laporan Komparasi Biometrik Gait: ${filename}`,
+              url: writeResult.uri,
+              dialogTitle: "Simpan atau Bagikan Gambar Komparasi",
+            });
+          } else {
+            alert(`Gambar berhasil disimpan ke folder Dokumen: ${filename}`);
+          }
+        } catch (_) {
+          alert(`Gambar berhasil disimpan ke penyimpanan lokal: ${filename}`);
+        }
+        return true;
+      } else {
+        const a = document.createElement("a");
+        a.href = base64DataUrl;
+        a.download = filename;
+        a.click();
+        return true;
+      }
+    } catch (err) {
+      console.error("Gagal mengekspor file gambar:", err);
+      alert(`Gagal menyimpan gambar: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
 }
