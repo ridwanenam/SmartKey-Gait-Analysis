@@ -586,6 +586,31 @@ class DatabaseService {
     }
   }
 
+  public async updateRegLogSlotName(slot: number, newName: string): Promise<void> {
+    await this.initialize();
+    const pattern = `Slot ${slot + 1}`;
+    const newSlotLabel = `Slot ${slot + 1} (${newName})`;
+
+    if (Capacitor.isNativePlatform() && this.db) {
+      await this.db.run(
+        `UPDATE log_registrasi SET slot_user = ? WHERE slot_user LIKE ?;`,
+        [newSlotLabel, `%${pattern}%`]
+      );
+    } else {
+      const logs: RegLogRecord[] = JSON.parse(localStorage.getItem('sqlite_log_registrasi') || '[]');
+      let updated = false;
+      for (const log of logs) {
+        if (log.slotUser.includes(pattern)) {
+          log.slotUser = newSlotLabel;
+          updated = true;
+        }
+      }
+      if (updated) {
+        localStorage.setItem('sqlite_log_registrasi', JSON.stringify(logs));
+      }
+    }
+  }
+
   public async isUserRegistered(): Promise<boolean> {
     await this.initialize();
     try {

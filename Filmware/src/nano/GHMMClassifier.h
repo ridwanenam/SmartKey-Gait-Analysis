@@ -45,9 +45,10 @@ private:
             float diff = features[d] - means[d];
             float mahalanobisSq = (diff * diff) / var;
             
-            // Robust loss: batasi penalti kuadrat per dimensi (maks 12.0f = ~3.5 sigma)
-            // Ini mencegah 1 glitch atau anomali sesaat langsung menjatuhkan log likelihood ke nilai minus ekstrem
-            if (mahalanobisSq > 12.0f) mahalanobisSq = 12.0f;
+            // Robust loss: batasi penalti kuadrat per dimensi (maks 36.0f = ~6.0 sigma)
+            // Cukup toleran untuk variasi gaya jalan wajar (jarak < 9.0),
+            // namun tegas menghukum deviasi besar seperti ayunan tangan palsu (jarak > 30.0)
+            if (mahalanobisSq > 36.0f) mahalanobisSq = 36.0f;
             
             // Formula Gaussian: -0.5 * ln(2 * pi * var) - 0.5 * mahalanobisSq
             float term = -0.5f * (logf(2.0f * (float)M_PI * var) + mahalanobisSq);

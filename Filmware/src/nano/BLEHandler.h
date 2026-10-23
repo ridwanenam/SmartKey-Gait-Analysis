@@ -28,10 +28,11 @@ public:
     }
 
     static void onBleDisconnected(BLEDevice central) {
-        Serial.print(F("[BLE] Terputus dari Ponsel: "));
-        Serial.println(central.address());
-        BLE.advertise();
-        Serial.println(F("[BLE] Auto Re-Advertising Dinyalakan Kembali"));
+        (void)central;
+        // JANGAN panggil BLE.advertise() di dalam ISR callback! Cukup set flag boolean
+        // agar dieksekusi secara aman di thread loop utama tanpa memicu deadlock SPI Nina-W102.
+        extern volatile bool g_bleNeedsAdvertise;
+        g_bleNeedsAdvertise = true;
     }
 
     // Inisialisasi GATT Server & Karakteristik BLE
@@ -64,14 +65,20 @@ public:
     void poll() {
         BLE.poll();
 
-        // Penjaga Auto-Advertising: Pastikan beacon BLE tetap mengudara saat belum terhubung
-        if (!BLE.connected()) {
-            static unsigned long lastAdvCheck = 0;
-            unsigned long now = millis();
-            if (now - lastAdvCheck >= 3000) {
-                lastAdvCheck = now;
-                BLE.advertise();
-            }
+        // Penjaga Auto-Advertising Aman (Non-Spam, Bebas Deadlock SPI):
+        extern volatile bool g_bleNeedsAdvertise;
+        static bool lastConnState = false;
+        bool currentlyConnected = BLE.connected();
+
+        if (lastConnState && !currentlyConnected) {
+            g_bleNeedsAdvertise = true;
+        }
+        lastConnState = currentlyConnected;
+
+        if (g_bleNeedsAdvertise && !currentlyConnected) {
+            g_bleNeedsAdvertise = false;
+            BLE.advertise();
+            Serial.println(F("[BLE] Auto Re-Advertising Dinyalakan Kembali (Safe Loop)"));
         }
 
         // Cek apakah ada string perintah masuk dari Mobile App

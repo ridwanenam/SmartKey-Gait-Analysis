@@ -214,6 +214,14 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     let waveform: WaveformPoint[] = [];
     let summary: any = null;
     let scoresBreakdown: Array<{ slot: number; score: number }> = [];
+    let gates: {
+      normJerk: number;
+      asym: number;
+      excursion: number;
+      crestFactor: number;
+      axisDominance: number;
+      deltaGyro: number;
+    } | null = null;
 
     if (detailsStr) {
       try {
@@ -225,6 +233,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           if (Array.isArray(parsed.waveform)) waveform = parsed.waveform;
           if (parsed.summary) summary = parsed.summary;
           if (Array.isArray(parsed.scoresBreakdown)) scoresBreakdown = parsed.scoresBreakdown;
+          if (parsed.gates) gates = parsed.gates;
         }
       } catch (_) {}
     }
@@ -264,7 +273,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       });
     }
 
-    return { steps, waveform, summary, scoresBreakdown };
+    return { steps, waveform, summary, scoresBreakdown, gates };
   }, []);
 
   const baseParsed = useMemo(() => {
@@ -275,37 +284,71 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     return parseRecordDetails(currentHead?.details);
   }, [currentHead, parseRecordDetails]);
 
-  // Ekstraksi 5D Kinematics Base
+  // Ekstraksi 5D Kinematics Base (Rerata Sesi Registrasi / Model Template)
   const base5D = useMemo(() => {
+    const validSteps = baseParsed.steps.filter((st) => st.status !== "FAILED" && st.status !== "DISCARDED");
+    if (validSteps.length > 0) {
+      let sumMean = 0, sumVar = 0, sumStd = 0, sumSkew = 0, sumKurt = 0;
+      validSteps.forEach((st) => {
+        sumMean += parseFloat(String(st.mean ?? "0"));
+        sumVar += parseFloat(String(st.variance ?? "0"));
+        sumStd += parseFloat(String(st.stdDev ?? "0"));
+        sumSkew += parseFloat(String(st.skewness ?? "0"));
+        sumKurt += parseFloat(String(st.kurtosis ?? "0"));
+      });
+      const n = validSteps.length;
+      return {
+        mean: sumMean / n,
+        variance: sumVar / n,
+        stdDev: sumStd / n,
+        skewness: sumSkew / n,
+        kurtosis: sumKurt / n,
+      };
+    }
     const s = baseParsed.summary;
-    const steps = baseParsed.steps;
-    const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
-
-    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "75.0"));
-    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "1200.0"));
-    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "85.0"));
-    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "65.0"));
-    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "45.0"));
-
-    return { mean, variance, stdDev, skewness, kurtosis };
+    const lastStep = baseParsed.steps.length > 0 ? baseParsed.steps[baseParsed.steps.length - 1] : null;
+    return {
+      mean: parseFloat(String(s?.mean ?? lastStep?.mean ?? "75.0")),
+      variance: parseFloat(String(s?.variance ?? lastStep?.variance ?? "38.0")),
+      stdDev: parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "85.0")),
+      skewness: parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "55.0")),
+      kurtosis: parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "45.0")),
+    };
   }, [baseParsed]);
 
-  // Ekstraksi 5D Kinematics Head
+  // Ekstraksi 5D Kinematics Head (Rerata Sesi Autentikasi 5 Jendela Aktual)
   const head5D = useMemo(() => {
+    const validSteps = headParsed.steps.filter((st) => st.status !== "FAILED" && st.status !== "DISCARDED");
+    if (validSteps.length > 0) {
+      let sumMean = 0, sumVar = 0, sumStd = 0, sumSkew = 0, sumKurt = 0;
+      validSteps.forEach((st) => {
+        sumMean += parseFloat(String(st.mean ?? "0"));
+        sumVar += parseFloat(String(st.variance ?? "0"));
+        sumStd += parseFloat(String(st.stdDev ?? "0"));
+        sumSkew += parseFloat(String(st.skewness ?? "0"));
+        sumKurt += parseFloat(String(st.kurtosis ?? "0"));
+      });
+      const n = validSteps.length;
+      return {
+        mean: sumMean / n,
+        variance: sumVar / n,
+        stdDev: sumStd / n,
+        skewness: sumSkew / n,
+        kurtosis: sumKurt / n,
+      };
+    }
     const s = headParsed.summary;
-    const steps = headParsed.steps;
-    const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
-
-    const mean = parseFloat(String(s?.mean ?? lastStep?.mean ?? "78.0"));
-    const variance = parseFloat(String(s?.variance ?? lastStep?.variance ?? "1350.0"));
-    const stdDev = parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "82.0"));
-    const skewness = parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "67.0"));
-    const kurtosis = parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "48.0"));
-
-    return { mean, variance, stdDev, skewness, kurtosis };
+    const lastStep = headParsed.steps.length > 0 ? headParsed.steps[headParsed.steps.length - 1] : null;
+    return {
+      mean: parseFloat(String(s?.mean ?? lastStep?.mean ?? "78.0")),
+      variance: parseFloat(String(s?.variance ?? lastStep?.variance ?? "40.0")),
+      stdDev: parseFloat(String(s?.stdDev ?? lastStep?.stdDev ?? "82.0")),
+      skewness: parseFloat(String(s?.skewness ?? lastStep?.skewness ?? "55.0")),
+      kurtosis: parseFloat(String(s?.kurtosis ?? lastStep?.kurtosis ?? "48.0")),
+    };
   }, [headParsed]);
 
-  // Perhitungan Delta Kinematika
+  // Perhitungan Delta Kinematika (Rerata Sesi Head vs Base)
   const deltas = useMemo(() => {
     const dMean = head5D.mean - base5D.mean;
     const dVar = head5D.variance - base5D.variance;
@@ -321,6 +364,17 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       dKurt: parseFloat(dKurt.toFixed(3)),
     };
   }, [base5D, head5D]);
+
+  // Evaluasi Deviasi Kinematika Sesi Aktual (Selaras 100% dengan Firmware Edge RP2040)
+  const sessionDeviations = useMemo(() => {
+    const d0 = Math.abs(deltas.dMean) > 18.0;
+    const d1 = Math.abs(deltas.dVar) > 15.0;
+    const d2 = Math.abs(deltas.dStd) > 20.0;
+    const d3 = Math.abs(deltas.dSkew) > 12.0;
+    const d4 = Math.abs(deltas.dKurt) > 18.0;
+    const count = (d0 ? 1 : 0) + (d1 ? 1 : 0) + (d2 ? 1 : 0) + (d3 ? 1 : 0) + (d4 ? 1 : 0);
+    return { d0, d1, d2, d3, d4, count };
+  }, [deltas]);
 
   // Skor CIR & Status Head
   const headScoreNum = useMemo(() => {
@@ -391,16 +445,48 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     return result.sort((a, b) => b.score - a.score);
   }, [currentHead, headParsed.scoresBreakdown, baseSlots, selectedBaseSlot]);
 
-  // Margin Separasi antara Best Match dan Runner-up
+  // Margin Separasi antara Best Match dan Runner-up (dengan pengecualian Intra-User pemilik yang sama)
   const headMarginInfo = useMemo(() => {
     if (headEvaluatedSlots.length < 2) return null;
     const best = headEvaluatedSlots[0];
-    const runnerUp = headEvaluatedSlots[1];
-    const margin = parseFloat((best.score - runnerUp.score).toFixed(1));
-    const isSafe = margin >= 6.0;
+    const immediateRunnerUp = headEvaluatedSlots[1];
+
+    const isSamePrefix = (nameA: string, nameB: string) => {
+      if (!nameA || !nameB) return false;
+      const tokenA = nameA.trim().split(/[\s_\-]+/)[0].toLowerCase();
+      const tokenB = nameB.trim().split(/[\s_\-]+/)[0].toLowerCase();
+      if (tokenA.length >= 3 && tokenA === tokenB) return true;
+      const minLen = Math.min(nameA.length, nameB.length);
+      if (minLen >= 4 && nameA.substring(0, minLen).toLowerCase() === nameB.substring(0, minLen).toLowerCase()) return true;
+      return false;
+    };
+
+    const isIntraUser = isSamePrefix(best.name, immediateRunnerUp.name);
+    // Cari runner-up eksternal (profil pengguna lain)
+    const foreignSlots = headEvaluatedSlots.slice(1).filter((s) => !isSamePrefix(best.name, s.name));
+    const closestForeign = foreignSlots.length > 0 ? foreignSlots[0] : null;
+
+    let margin = 0;
+    let isSafe = false;
+
+    if (isIntraUser) {
+      if (closestForeign) {
+        margin = parseFloat((best.score - closestForeign.score).toFixed(1));
+        isSafe = margin >= 6.0;
+      } else {
+        margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
+        isSafe = true; // Tidak ada pengguna asing yang bersaing
+      }
+    } else {
+      margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
+      isSafe = margin >= 6.0;
+    }
+
     return {
       best,
-      runnerUp,
+      runnerUp: immediateRunnerUp,
+      closestForeign,
+      isIntraUser,
       margin,
       isSafe,
     };
@@ -815,7 +901,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           base: base5D.stdDev.toFixed(1),
           head: head5D.stdDev.toFixed(1),
           delta: deltas.dStd,
-          tol: 15.0,
+          tol: 20.0,
         },
         {
           name: "Periode Langkah (k)",
@@ -823,7 +909,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           base: base5D.skewness.toFixed(0),
           head: head5D.skewness.toFixed(0),
           delta: deltas.dSkew,
-          tol: 10.0,
+          tol: 12.0,
         },
         {
           name: "Hentakan Kaki (acc)",
@@ -869,11 +955,22 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.fillText(isOk ? "VALID" : "DEVIASI", 380, rowY + 4);
       });
 
-      drawRoundRect(30, 396, 410, 44, 6, "#0F172A", "#1E293B", 1);
+      drawRoundRect(30, 394, 410, 56, 6, "#0F172A", "#1E293B", 1);
+      const g = headParsed.gates;
+      const jerkStr = g?.normJerk !== undefined && g.normJerk !== 0 ? g.normJerk.toFixed(3) : "—";
+      const asymStr = g?.asym !== undefined && g.asym !== 0 ? g.asym.toFixed(2) : "—";
+      const excStr = g?.excursion !== undefined && g.excursion !== 0 ? `${g.excursion.toFixed(1)}°` : "—";
+      const cfStr = g?.crestFactor !== undefined && g.crestFactor !== 0 ? g.crestFactor.toFixed(2) : "—";
+      const adStr = g?.axisDominance !== undefined && g.axisDominance !== 0 ? g.axisDominance.toFixed(2) : "—";
+
+      ctx.fillStyle = "#38BDF8";
+      ctx.font = "bold 8.5px monospace";
+      ctx.fillText(`SHADOW GATES: Jerk=${jerkStr} | Asym=${asymStr} | Exc=${excStr} | CF=${cfStr} | Dom=${adStr}`, 38, 408);
+
       ctx.fillStyle = "#94A3B8";
-      ctx.font = "9px monospace";
-      ctx.fillText(`Ambang Adaptif: ${headParsed.summary?.adaptiveThreshold ?? "0.15g"} | Rasio ZUPT: ${headParsed.steps.filter((s) => s.status !== "FAILED").length}/5 Valid`, 38, 412);
-      ctx.fillText(`Model GHMM: Forward Likelihood: ${headParsed.summary?.logLikelihood ?? "-12.4"}`, 38, 428);
+      ctx.font = "8px monospace";
+      ctx.fillText(`Ambang Adaptif: ${headParsed.summary?.adaptiveThreshold ?? "0.15g"} | Deviasi Sesi: ${sessionDeviations.count}/5 Fitur | ZUPT: ${headParsed.steps.filter((s) => s.status !== "FAILED").length}/5`, 38, 424);
+      ctx.fillText(`Likelihood: ${headParsed.summary?.logLikelihood ?? "-18.2"} | Margin: +${headMarginInfo?.margin ?? 0}% | Evaluasi: Rerata 5 Jendela`, 38, 438);
 
       // BOX 2: BREAKDOWN CIR MULTICLASS (x: 20, y: 464, w: 430, h: 342)
       drawRoundRect(20, 464, 430, 342, 12, "#131D31", "#334155", 1);
@@ -950,14 +1047,25 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         drawRoundRect(30, marginBoxY, 410, 64, 6, headMarginInfo.isSafe ? "#052E16" : "#451A03", headMarginInfo.isSafe ? "#10B981" : "#F59E0B", 1);
         ctx.fillStyle = headMarginInfo.isSafe ? "#4ADE80" : "#FBBF24";
         ctx.font = "bold 10px monospace";
-        ctx.fillText(`Margin Separasi Biometrik: +${headMarginInfo.margin}% (${headMarginInfo.isSafe ? "AMAN ≥ 6.0%" : "TIPIS < 6.0%"})`, 40, marginBoxY + 18);
+        const tag = headMarginInfo.isIntraUser 
+          ? (headMarginInfo.isSafe ? "AMAN (Intra-User)" : "TIPIS < 6.0%") 
+          : (headMarginInfo.isSafe ? "AMAN ≥ 6.0%" : "TIPIS < 6.0%");
+        ctx.fillText(`Margin Separasi Biometrik: +${headMarginInfo.margin}% (${tag})`, 40, marginBoxY + 18);
 
         ctx.fillStyle = "#E2E8F0";
         ctx.font = "9px sans-serif";
-        ctx.fillText(`Unggul: ${headMarginInfo.best.name} (${headMarginInfo.best.score.toFixed(1)}%) vs Runner-up: ${headMarginInfo.runnerUp.name} (${headMarginInfo.runnerUp.score.toFixed(1)}%)`, 40, marginBoxY + 34);
+        if (headMarginInfo.isIntraUser) {
+          ctx.fillText(`Unggul: ${headMarginInfo.best.name} (${headMarginInfo.best.score.toFixed(1)}%) vs Intra: ${headMarginInfo.runnerUp.name} (${headMarginInfo.runnerUp.score.toFixed(1)}%)`, 40, marginBoxY + 34);
+        } else {
+          ctx.fillText(`Unggul: ${headMarginInfo.best.name} (${headMarginInfo.best.score.toFixed(1)}%) vs Runner-up: ${headMarginInfo.runnerUp.name} (${headMarginInfo.runnerUp.score.toFixed(1)}%)`, 40, marginBoxY + 34);
+        }
         ctx.fillStyle = "#94A3B8";
         ctx.font = "8px monospace";
-        ctx.fillText(headMarginInfo.isSafe ? "Pembedaan antar profil pemilik berlangsung solid dan tegas." : "Perlu diwaspadai jika gaya jalan pengguna mendekati profil lain.", 40, marginBoxY + 50);
+        if (headMarginInfo.isIntraUser) {
+          ctx.fillText(headMarginInfo.isSafe ? "Profil sejenis dikecualikan dari sanksi penolakan separasi persaingan." : "Perlu diwaspadai jika gaya jalan mendekati profil lain.", 40, marginBoxY + 50);
+        } else {
+          ctx.fillText(headMarginInfo.isSafe ? "Pembedaan antar profil pemilik berlangsung solid dan tegas." : "Perlu diwaspadai jika gaya jalan pengguna mendekati profil lain.", 40, marginBoxY + 50);
+        }
       } else {
         drawRoundRect(30, marginBoxY, 410, 64, 6, "#0F172A", "#1E293B", 1);
         ctx.fillStyle = "#94A3B8";
@@ -1596,11 +1704,23 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                 {/* Tabel Perbandingan 5 Fitur Kinematika */}
                 <div className="rounded-xl border border-slate-200 overflow-hidden shadow-xs">
                   <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <span style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
-                      Perbandingan Parameter Vektor Fitur 5D (Base vs Head)
-                    </span>
-                    <span style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.58rem" }}>
-                      Basis Normalisasi: 150 Sampel / Jendela
+                    <div>
+                      <span style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
+                        Perbandingan Vektor Fitur 5D (Rerata Sesi Base vs Head)
+                      </span>
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem" }}>
+                        Evaluasi Rerata 5 Jendela Aktif · Basis Normalisasi 150 Sampel / Jendela
+                      </p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded text-[0.58rem] font-bold ${
+                        sessionDeviations.count < 2
+                          ? "bg-green-100 text-green-800 border border-green-300"
+                          : "bg-red-100 text-red-800 border border-red-300"
+                      }`}
+                      style={{ fontFamily: MONO }}
+                    >
+                      Deviasi Sesi Firmware: {sessionDeviations.count} / 5 ({sessionDeviations.count < 2 ? "Lolos Kinematika" : "Veto Kinematika"})
                     </span>
                   </div>
 
@@ -1616,11 +1736,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {[
-                        { label: "Rerata Kecepatan Sudut (Mean Gyro / μ)", baseVal: `${base5D.mean.toFixed(1)} °/s`, headVal: `${head5D.mean.toFixed(1)} °/s`, delta: `${deltas.dMean >= 0 ? "+" : ""}${deltas.dMean.toFixed(1)} °/s`, tol: "±18.0 °/s", pass: Math.abs(deltas.dMean) <= 18.0 },
-                        { label: "Varians Sinyal Gyro (Variance / σ²)", baseVal: `${base5D.variance.toFixed(1)}`, headVal: `${head5D.variance.toFixed(1)}`, delta: `${deltas.dVar >= 0 ? "+" : ""}${deltas.dVar.toFixed(1)}`, tol: "±450.0", pass: Math.abs(deltas.dVar) <= 450.0 },
-                        { label: "Keteraturan Irama (Cadence Regularity / R)", baseVal: `${base5D.stdDev.toFixed(1)} %`, headVal: `${head5D.stdDev.toFixed(1)} %`, delta: `${deltas.dStd >= 0 ? "+" : ""}${deltas.dStd.toFixed(1)} %`, tol: "±15.0 %", pass: Math.abs(deltas.dStd) <= 15.0 },
-                        { label: "Periode Langkah (Stride Period / k)", baseVal: `${base5D.skewness.toFixed(0)} smp`, headVal: `${head5D.skewness.toFixed(0)} smp`, delta: `${deltas.dSkew >= 0 ? "+" : ""}${deltas.dSkew.toFixed(0)} smp`, tol: "±10 smp", pass: Math.abs(deltas.dSkew) <= 10.0 },
-                        { label: "Hentakan Kaki Dinamis (Impact / %g)", baseVal: `${base5D.kurtosis.toFixed(1)} %g`, headVal: `${head5D.kurtosis.toFixed(1)} %g`, delta: `${deltas.dKurt >= 0 ? "+" : ""}${deltas.dKurt.toFixed(1)} %g`, tol: "±18.0 %g", pass: Math.abs(deltas.dKurt) <= 18.0 },
+                        { label: "Rerata Kecepatan Sudut (Mean Gyro / μ)", baseVal: `${base5D.mean.toFixed(1)} °/s`, headVal: `${head5D.mean.toFixed(1)} °/s`, delta: `${deltas.dMean >= 0 ? "+" : ""}${deltas.dMean.toFixed(1)} °/s`, tol: "±18.0 °/s", pass: !sessionDeviations.d0 },
+                        { label: "Simpangan Baku Ayunan (Gyro StdDev / σ)", baseVal: `${base5D.variance.toFixed(1)} °/s`, headVal: `${head5D.variance.toFixed(1)} °/s`, delta: `${deltas.dVar >= 0 ? "+" : ""}${deltas.dVar.toFixed(1)} °/s`, tol: "±15.0 °/s", pass: !sessionDeviations.d1 },
+                        { label: "Keteraturan Irama (Cadence Regularity / R)", baseVal: `${base5D.stdDev.toFixed(1)} %`, headVal: `${head5D.stdDev.toFixed(1)} %`, delta: `${deltas.dStd >= 0 ? "+" : ""}${deltas.dStd.toFixed(1)} %`, tol: "±20.0 %", pass: !sessionDeviations.d2 },
+                        { label: "Periode Langkah (Stride Period / k)", baseVal: `${base5D.skewness.toFixed(0)} smp`, headVal: `${head5D.skewness.toFixed(0)} smp`, delta: `${deltas.dSkew >= 0 ? "+" : ""}${deltas.dSkew.toFixed(0)} smp`, tol: "±12 smp", pass: !sessionDeviations.d3 },
+                        { label: "Hentakan Kaki Dinamis (Impact / %g)", baseVal: `${base5D.kurtosis.toFixed(1)} %g`, headVal: `${head5D.kurtosis.toFixed(1)} %g`, delta: `${deltas.dKurt >= 0 ? "+" : ""}${deltas.dKurt.toFixed(1)} %g`, tol: "±18.0 %g", pass: !sessionDeviations.d4 },
                       ].map((row) => (
                         <tr key={row.label} className="hover:bg-slate-50/60 transition-colors">
                           <td className="px-3.5 py-2.5 font-sans font-semibold text-slate-800 text-[0.72rem]">
@@ -1657,6 +1777,105 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+                {/* KARTU DIAGNOSTIK GERBANG FISIK & SHADOW MODE (TAHAP 0) */}
+                <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-5 h-5 rounded-md flex items-center justify-center bg-cyan-100 text-cyan-700">
+                        <Activity size={12} />
+                      </div>
+                      <div>
+                        <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
+                          Diagnostik Invarian Fisik & Shadow Gates (Tahap 0)
+                        </p>
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem" }}>
+                          Metrik diskriminator hentakan & asimetri gelombang (Edge RP2040 Telemetry)
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className="px-2 py-0.5 rounded text-[0.55rem] font-bold bg-cyan-50 text-cyan-800 border border-cyan-200"
+                      style={{ fontFamily: MONO }}
+                    >
+                      Shadow Mode (Logging Only)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-2.5">
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Normalized Jerk Index
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.normJerk !== undefined && headParsed.gates.normJerk !== 0 ? headParsed.gates.normJerk.toFixed(3) : "—"}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Langkah nyata: ≥0.25 | Ayun bebas: ~0.11
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Swing-Stance Asymmetry
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.asym !== undefined && headParsed.gates.asym !== 0 ? headParsed.gates.asym.toFixed(2) : "—"}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Kaki melangkah: ≥1.5 | Ayunan: ~1.0-1.2
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Ekskursi Ayunan Paha
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.excursion !== undefined && headParsed.gates.excursion !== 0 ? `${headParsed.gates.excursion.toFixed(1)}°` : "—"}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Syarat saku celana: ≥ 15.0°
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Crest Factor Impuls
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.crestFactor !== undefined && headParsed.gates.crestFactor !== 0 ? headParsed.gates.crestFactor.toFixed(2) : "—"}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Hentakan saku celana: ≥ 2.15
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Dominansi Sumbu Pitch
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.axisDominance !== undefined && headParsed.gates.axisDominance !== 0 ? headParsed.gates.axisDominance.toFixed(2) : "—"}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Terkekang saku celana: ≥ 0.58
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
+                        Δ Gyro Sesi Aktual
+                      </p>
+                      <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 700, fontSize: "0.9rem", marginTop: 2 }}>
+                        {headParsed.gates?.deltaGyro !== undefined && headParsed.gates.deltaGyro !== 0 ? `${headParsed.gates.deltaGyro.toFixed(1)} °/s` : `${Math.abs(deltas.dMean).toFixed(1)} °/s`}
+                      </p>
+                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
+                        Batas aman deviasi: ≤ 22.0 °/s
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* 3 Kartu Komparasi Model GHMM & Ambang */}
@@ -1749,7 +1968,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                           }`}
                           style={{ fontFamily: MONO }}
                         >
-                          Margin Separasi: +{headMarginInfo.margin}% ({headMarginInfo.isSafe ? "Aman" : "Tipis"})
+                          Margin Separasi: +{headMarginInfo.margin}% ({headMarginInfo.isIntraUser ? (headMarginInfo.isSafe ? "Aman (Intra-User)" : "Tipis") : (headMarginInfo.isSafe ? "Aman" : "Tipis")})
                         </span>
                       )}
                     </div>

@@ -20,6 +20,9 @@ char targetUserName[16] = "User_1";
 uint8_t validWindowCounter = 0;
 float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 
+// Penanda re-advertising aman non-blocking (bebas deadlock SPI)
+volatile bool g_bleNeedsAdvertise = false;
+
 // Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms)
 unsigned long previousSampleTime = 0;
 
@@ -49,17 +52,10 @@ void setup() {
         while (1);
     }
 
-    // 4. Inisialisasi Hardware Watchdog Timer (Timeout: 5000 ms / 5 detik)
-    // Jika sistem mengalami freeze/hang karena alasan apapun, hardware RP2040 otomatis reboot dalam sekejap (<0.5 detik)
-    mbed::Watchdog::get_instance().start(5000);
-
-    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode) + WDT Active"));
+    Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode)"));
 }
 
 void loop() {
-    // 0. Segarkan Hardware Watchdog Timer di setiap iterasi normal (Heartbeat)
-    mbed::Watchdog::get_instance().kick();
-
     // 1. Polling Event Komunikasi BLE
     ble.poll();
     handleIncomingCommands();
@@ -269,6 +265,31 @@ void handleIncomingCommands() {
                 }
             }
         }
+        // Perintah Ganti Nama User Slot: "RENAME:<slot>:<newName>" (Contoh: "RENAME:0:ridwan biasa")
+        else if (strncmp(cmd, "RENAME:", 7) == 0) {
+            char *slotStr = &cmd[7];
+            char *colon = strchr(slotStr, ':');
+            if (colon != NULL) {
+                *colon = '\0';
+                uint8_t slotToRename = atoi(slotStr);
+                char *newName = colon + 1;
+                if (slotToRename < MAX_USERS && strlen(newName) > 0) {
+                    strncpy(activeUsers[slotToRename].userName, newName, sizeof(activeUsers[slotToRename].userName) - 1);
+                    activeUsers[slotToRename].userName[sizeof(activeUsers[slotToRename].userName) - 1] = '\0';
+                    if (activeUsers[slotToRename].isRegistered) {
+                        StorageManager::saveUser(slotToRename, activeUsers[slotToRename]);
+                        reloadUsersFromFlash();
+                    }
+                    char renameMsg[48];
+                    snprintf(renameMsg, sizeof(renameMsg), "RENAME_SUCCESS:%d:%s", slotToRename, activeUsers[slotToRename].userName);
+                    ble.sendDoorCommand(renameMsg);
+                    Serial.print(F("[STORAGE] Nama Slot "));
+                    Serial.print(slotToRename);
+                    Serial.print(F(" Diubah Menjadi: "));
+                    Serial.println(activeUsers[slotToRename].userName);
+                }
+            }
+        }
         // Emergency Action: Pembukaan Pintu Cepat via PIN Valid Mobile App
         else if (strcmp(cmd, "BYPASS_OPEN") == 0) {
             ble.sendDoorCommand("OPEN_DOOR:PIN_BYPASS");
@@ -356,6 +377,30 @@ void processTrainingState(float ax, float ay, float az, float gx, float gy, floa
     }
 }
 
+// Fungsi pembanding prefix nama pengguna untuk mengidentifikasi apakah 2 slot milik orang yang sama
+// Contoh: "ridwan jln" dan "ridwan jln cpt" -> kata pertama "ridwan" sama -> return true
+static bool isSameUserPrefix(const char *nameA, const char *nameB) {
+    if (!nameA || !nameB || nameA[0] == '\0' || nameB[0] == '\0') return false;
+    
+    // Cari batas kata pertama (sebelum spasi ' ', underscore '_', atau strip '-')
+    size_t lenA = 0;
+    while (nameA[lenA] && nameA[lenA] != ' ' && nameA[lenA] != '_' && nameA[lenA] != '-') lenA++;
+    
+    size_t lenB = 0;
+    while (nameB[lenB] && nameB[lenB] != ' ' && nameB[lenB] != '_' && nameB[lenB] != '-') lenB++;
+    
+    // Jika kata pertama sama (case-insensitive) dan minimal 3 huruf
+    if (lenA >= 3 && lenA == lenB) {
+        if (strncasecmp(nameA, nameB, lenA) == 0) return true;
+    }
+    
+    // Jika salah satu nama adalah awalan penuh dari nama lainnya (misal "ridwan" vs "ridwan_cepat")
+    size_t minLen = (strlen(nameA) < strlen(nameB)) ? strlen(nameA) : strlen(nameB);
+    if (minLen >= 4 && strncasecmp(nameA, nameB, minLen) == 0) return true;
+    
+    return false;
+}
+
 // Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User & Adaptasi EMA)
 void processAuthenticationState(float ax, float ay, float az, float gx, float gy, float gz) {
     bool windowComplete = featureExtractor.addSample(ax, ay, az, gx, gy, gz);
@@ -377,6 +422,26 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
             userScores[i] = -1.0f;
         }
 
+        // Variabel penampung rata-rata kinematika & penempatan sesi uji (5 jendela)
+        static float sessionFeaturesSum[NUM_FEATURES] = {0};
+        static float sessionThighExcursionSum = 0.0f;
+        static float sessionCrestFactorSum = 0.0f;
+        static float sessionAxisDominanceSum = 0.0f;
+        static float sessionNormJerkSum = 0.0f;
+        static float sessionAsymSum = 0.0f;
+
+        // Variabel evaluasi gerbang fisik sesi
+        bool isKinematicallyValid = true;
+        bool isPantsPocketPlacement = true;
+        float avgFeatures[NUM_FEATURES] = {0};
+        float avgThighExcursion = 0.0f;
+        float avgCrestFactor = 0.0f;
+        float avgAxisDominance = 0.0f;
+        float avgNormJerk = 0.0f;
+        float avgAsym = 0.0f;
+        uint8_t deviasiCount = 0;
+        float deltaGyro = 0.0f;
+
         if (isWalking) {
             float currentFeatures[NUM_FEATURES];
             featureExtractor.computeFeatures(currentFeatures);
@@ -387,6 +452,27 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
 
             validWindowCounter++;
             telem.windowIndex = validWindowCounter;
+
+            // Inisialisasi akumulator sesi pada awal jendela ke-1
+            if (validWindowCounter == 1) {
+                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                    sessionFeaturesSum[d] = 0.0f;
+                }
+                sessionThighExcursionSum = 0.0f;
+                sessionCrestFactorSum = 0.0f;
+                sessionAxisDominanceSum = 0.0f;
+                sessionNormJerkSum = 0.0f;
+                sessionAsymSum = 0.0f;
+            }
+
+            for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                sessionFeaturesSum[d] += currentFeatures[d];
+            }
+            sessionThighExcursionSum += featureExtractor.computeThighExcursion();
+            sessionCrestFactorSum += featureExtractor.computeImpactCrestFactor();
+            sessionAxisDominanceSum += featureExtractor.computeAxisDominanceRatio();
+            sessionNormJerkSum += featureExtractor.computeNormalizedJerkIndex();
+            sessionAsymSum += featureExtractor.computeSwingStanceAsymmetry();
 
             // Evaluasi terhadap seluruh profil pemilik yang terdaftar (Multiclass 1-vs-All)
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
@@ -408,15 +494,75 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
             }
 
             if (bestUserIdx >= 0) {
+                // Evaluasi apakah runner-up terdekat berasal dari pemilik yang sama (Intra-User)
+                float maxForeignConfidence = -1.0f;
+                for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                    if (activeUsers[i].isRegistered && (int)i != bestUserIdx) {
+                        if (!isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[i].userName)) {
+                            if (userScores[i] > maxForeignConfidence) {
+                                maxForeignConfidence = userScores[i];
+                            }
+                        }
+                    }
+                }
+
+                bool isRunnerUpSameUser = (runnerUpUserIdx >= 0) && 
+                    isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[runnerUpUserIdx].userName);
+
+                bool hasCleanMargin = false;
+                if (isRunnerUpSameUser) {
+                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= 6.0f);
+                } else {
+                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+                }
+
+                // Pada jendela ke-5 (selesai), evaluasi gerbang kinematika fisik & penempatan saku
+                if (validWindowCounter >= TARGET_WINDOWS) {
+                    for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                        avgFeatures[d] = sessionFeaturesSum[d] / (float)TARGET_WINDOWS;
+                    }
+                    avgThighExcursion = sessionThighExcursionSum / (float)TARGET_WINDOWS;
+                    avgCrestFactor = sessionCrestFactorSum / (float)TARGET_WINDOWS;
+                    avgAxisDominance = sessionAxisDominanceSum / (float)TARGET_WINDOWS;
+                    avgNormJerk = sessionNormJerkSum / (float)TARGET_WINDOWS;
+                    avgAsym = sessionAsymSum / (float)TARGET_WINDOWS;
+
+                    float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
+                    deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
+
+                    deviasiCount = 0;
+                    if (deltaGyro > 18.0f) deviasiCount++;
+                    if (fabsf(avgFeatures[1] - 0.5f * (activeUsers[bestUserIdx].means[0][1] + activeUsers[bestUserIdx].means[1][1])) > 15.0f) deviasiCount++;
+                    if (fabsf(avgFeatures[2] - 0.5f * (activeUsers[bestUserIdx].means[0][2] + activeUsers[bestUserIdx].means[1][2])) > 20.0f) deviasiCount++;
+                    if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
+                    if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
+
+                    // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas)
+                    isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f);
+
+                    // Gerbang Penempatan Saku Celana (Anti-Saku Jaket Longgar & Ayunan Bebas)
+                    // Syarat: Wajib ada ayunan paha (>= 15 deg) DAN terikat dalam saku (Dominansi Sumbu pitch >= 0.58 ATAU Crest Factor impuls >= 2.15)
+                    isPantsPocketPlacement = (avgThighExcursion >= 15.0f) && (avgAxisDominance >= 0.58f || avgCrestFactor >= 2.15f);
+
+                    // Fused Kinematic & Placement Penalization:
+                    // Jika terjadi veto kinematika atau penempatan, jatuhkan skor kandidat ke < 40%
+                    // agar persentase numerik di aplikasi selaras dengan status merah ACCESS DENIED
+                    if (!isKinematicallyValid) {
+                        bestConfidence = fminf(bestConfidence * 0.45f, 38.0f);
+                        userScores[bestUserIdx] = bestConfidence;
+                    }
+                    if (!isPantsPocketPlacement) {
+                        bestConfidence = fminf(bestConfidence * 0.40f, 35.0f);
+                        userScores[bestUserIdx] = bestConfidence;
+                    }
+                }
+
                 telem.logLikelihood = bestLogProb;
                 telem.confidenceScore = bestConfidence;
                 telem.adaptiveThreshold = ghmm[bestUserIdx].getAdaptiveThreshold();
 
-                // Syarat Margin Separasi Juara 1 terhadap Juara 2 (minimal unggul 6% agar tidak tertukar/tercemar)
-                bool hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
-
-                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%) serta margin bersih
-                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f && hasCleanMargin) {
+                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%) serta margin bersih & valid
+                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f && hasCleanMargin && isKinematicallyValid && isPantsPocketPlacement) {
                     float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
                     telem.emaDelta = deltaEMA;
                     // Perbarui data adaptif ke Flash memori internal
@@ -461,31 +607,123 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                 ble.sendDoorCommand(scoresMsg);
                 delay(40);
 
-                // Cek Margin Separasi Juara 1 terhadap Juara 2
-                bool hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+                // Kirim paket diagnostik gerbang fisik (Tahap 0: Shadow Mode Diagnostics)
+                char gatesMsg[64];
+                snprintf(gatesMsg, sizeof(gatesMsg), "GATES:j=%.3f|a=%.2f|ex=%.1f|cf=%.2f|ad=%.2f|dG=%.1f",
+                    avgNormJerk, avgAsym, avgThighExcursion, avgCrestFactor, avgAxisDominance, deltaGyro);
+                ble.sendDoorCommand(gatesMsg);
+                delay(40);
 
-                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && hasCleanMargin) {
+                Serial.print(F("[SHADOW GATES] NormJerk: "));
+                Serial.print(avgNormJerk, 3);
+                Serial.print(F(" | Asym: "));
+                Serial.print(avgAsym, 2);
+                Serial.print(F(" | Excursion: "));
+                Serial.print(avgThighExcursion, 1);
+                Serial.print(F(" deg | Crest: "));
+                Serial.print(avgCrestFactor, 2);
+                Serial.print(F(" | AxisDom: "));
+                Serial.print(avgAxisDominance, 2);
+                Serial.print(F(" | DeltaGyro: "));
+                Serial.println(deltaGyro, 1);
+
+                // 1. Cek Margin Separasi terhadap runner-up (dikecualikan jika pemilik sama)
+                float maxForeignConfidence = -1.0f;
+                int foreignUserIdx = -1;
+                for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                    if (activeUsers[i].isRegistered && (int)i != bestUserIdx) {
+                        if (!isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[i].userName)) {
+                            if (userScores[i] > maxForeignConfidence) {
+                                maxForeignConfidence = userScores[i];
+                                foreignUserIdx = i;
+                            }
+                        }
+                    }
+                }
+
+                bool isRunnerUpSameUser = (runnerUpUserIdx >= 0) && 
+                    isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[runnerUpUserIdx].userName);
+
+                bool hasCleanMargin = false;
+                if (isRunnerUpSameUser) {
+                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= 6.0f);
+                } else {
+                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+                }
+
+                // 2. Evaluasi Rata-Rata Kinematika Sesi Uji vs Model Golden Pemenang
+                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                    avgFeatures[d] = sessionFeaturesSum[d] / (float)TARGET_WINDOWS;
+                }
+                avgThighExcursion = sessionThighExcursionSum / (float)TARGET_WINDOWS;
+                avgCrestFactor = sessionCrestFactorSum / (float)TARGET_WINDOWS;
+                avgAxisDominance = sessionAxisDominanceSum / (float)TARGET_WINDOWS;
+                avgNormJerk = sessionNormJerkSum / (float)TARGET_WINDOWS;
+                avgAsym = sessionAsymSum / (float)TARGET_WINDOWS;
+
+                float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
+                deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
+
+                deviasiCount = 0;
+                if (deltaGyro > 18.0f) deviasiCount++;
+                if (fabsf(avgFeatures[1] - 0.5f * (activeUsers[bestUserIdx].means[0][1] + activeUsers[bestUserIdx].means[1][1])) > 15.0f) deviasiCount++;
+                if (fabsf(avgFeatures[2] - 0.5f * (activeUsers[bestUserIdx].means[0][2] + activeUsers[bestUserIdx].means[1][2])) > 20.0f) deviasiCount++;
+                if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
+                if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
+
+                // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas)
+                isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f);
+
+                // Gerbang Penempatan Celana Ketat (Anti-Saku Jaket Longgar & Ayunan Bebas)
+                isPantsPocketPlacement = (avgThighExcursion >= 15.0f) && (avgAxisDominance >= 0.58f || avgCrestFactor >= 2.15f);
+
+                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && hasCleanMargin && isKinematicallyValid && isPantsPocketPlacement) {
                     Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
                     Serial.print(activeUsers[bestUserIdx].userName);
                     Serial.print(F(" (Skor: "));
                     Serial.print(bestConfidence);
                     Serial.print(F("%, Runner-up: "));
                     Serial.print(runnerUpConfidence);
+                    if (isRunnerUpSameUser && foreignUserIdx >= 0) {
+                        Serial.print(F("%, Foreign Runner-up: "));
+                        Serial.print(maxForeignConfidence);
+                    }
                     Serial.println(F("%)"));
 
                     char doorMsg[32];
                     snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
                     ble.sendDoorCommand(doorMsg);
+                } else if (!isPantsPocketPlacement) {
+                    Serial.print(F("[AUTH VETO] Ditolak: Penempatan Saku Jaket Longgar/Torso Terdeteksi (Ayunan Paha: "));
+                    Serial.print(avgThighExcursion);
+                    Serial.print(F(" deg, Dominasi Sumbu: "));
+                    Serial.print(avgAxisDominance);
+                    Serial.print(F(", Crest: "));
+                    Serial.print(avgCrestFactor);
+                    Serial.println(F(")"));
+                    ble.sendDoorCommand("ACCESS_DENIED");
+                } else if (!isKinematicallyValid) {
+                    Serial.print(F("[AUTH VETO] Ditolak: Kinematika Fisik Menyimpang / Ayun Tangan (Deviasi: "));
+                    Serial.print(deviasiCount);
+                    Serial.print(F(" fitur, Gyro Delta: "));
+                    Serial.print(deltaGyro);
+                    Serial.println(F(" deg/s)"));
+                    ble.sendDoorCommand("ACCESS_DENIED");
                 } else if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && !hasCleanMargin) {
-                    Serial.print(F("[AUTH AMBIGU] Akses Ditolak: Skor bersaing ketat antara Slot "));
-                    Serial.print(bestUserIdx);
-                    Serial.print(F(" ("));
-                    Serial.print(bestConfidence);
-                    Serial.print(F("%) dan Slot "));
-                    Serial.print(runnerUpUserIdx);
-                    Serial.print(F(" ("));
-                    Serial.print(runnerUpConfidence);
-                    Serial.println(F("%)"));
+                    Serial.print(F("[AUTH AMBIGU] Akses Ditolak: Skor bersaing ketat dengan profil lain"));
+                    if (isRunnerUpSameUser && foreignUserIdx >= 0) {
+                        Serial.print(F(" (Slot Foreign "));
+                        Serial.print(foreignUserIdx);
+                        Serial.print(F(" @ "));
+                        Serial.print(maxForeignConfidence);
+                        Serial.println(F("%)"));
+                    } else {
+                        Serial.print(F(" (Slot "));
+                        Serial.print(runnerUpUserIdx);
+                        Serial.print(F(" @ "));
+                        Serial.print(runnerUpConfidence);
+                        Serial.println(F("%)"));
+                    }
                     ble.sendDoorCommand("ACCESS_DENIED");
                 } else {
                     Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));

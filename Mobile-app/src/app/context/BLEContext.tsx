@@ -166,6 +166,14 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     status: string;
   }>>([]);
   const latestAuthScoresRef = useRef<Array<{ slot: number; score: number }>>([]);
+  const latestGatesRef = useRef<{
+    normJerk: number;
+    asym: number;
+    excursion: number;
+    crestFactor: number;
+    axisDominance: number;
+    deltaGyro: number;
+  } | null>(null);
   const latestTelemetryRef = useRef<BLETelemetry>(defaultBLEData.telemetry);
 
   const setActiveSession = useCallback((info: { mode: "auth" | "training" | null; slot: number; name: string }) => {
@@ -175,6 +183,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     currentSessionSteps.current = [];
     currentSessionWaveform.current = [];
     latestAuthScoresRef.current = [];
+    latestGatesRef.current = null;
     lastProgress.current = 0;
     verifiedUserNameRef.current = null;
     setVerifiedUserName(null);
@@ -236,6 +245,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     sessionLogged.current = false;
     verifiedUserNameRef.current = null;
     latestAuthScoresRef.current = [];
+    latestGatesRef.current = null;
     latestTelemetryRef.current = defaultBLEData.telemetry;
     setVerifiedUserName(null);
     currentSessionSteps.current = [];
@@ -285,6 +295,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       mode: "auth",
       targetUser: resolvedUser,
       scoresBreakdown: latestAuthScoresRef.current,
+      gates: latestGatesRef.current,
       summary: {
         totalWindows: Math.max(lastProgress.current || 5, currentSessionSteps.current.length, 5),
         confidenceScore: parseFloat(scoreVal.toFixed(1)),
@@ -347,6 +358,33 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         });
         latestAuthScoresRef.current = list;
         console.log("[AUTH BREAKDOWN]", list);
+      } else if (text.startsWith("GATES:")) {
+        // Parsing paket diagnostik gerbang fisik (Tahap 0: Shadow Mode Diagnostics)
+        // Format: "GATES:j=0.215|a=1.45|ex=28.5|cf=2.35|ad=0.68|dG=12.3"
+        const raw = text.substring(6);
+        const parts = raw.split("|");
+        const gData = {
+          normJerk: 0,
+          asym: 1.0,
+          excursion: 0,
+          crestFactor: 0,
+          axisDominance: 0,
+          deltaGyro: 0,
+        };
+        parts.forEach((p) => {
+          const [k, v] = p.split("=");
+          const val = parseFloat(v);
+          if (!isNaN(val)) {
+            if (k === "j") gData.normJerk = val;
+            else if (k === "a") gData.asym = val;
+            else if (k === "ex") gData.excursion = val;
+            else if (k === "cf") gData.crestFactor = val;
+            else if (k === "ad") gData.axisDominance = val;
+            else if (k === "dG") gData.deltaGyro = val;
+          }
+        });
+        latestGatesRef.current = gData;
+        console.log("[DIAGNOSTIC GATES]", gData);
       } else if (text.startsWith("OPEN_DOOR")) {
         const parts = text.split(":");
         const name = parts.length > 1 ? parts.slice(1).join(":").trim() : "Owner";
@@ -398,6 +436,14 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         addLog({ type: "system", status: "Info", message: "Seluruh Profil di Flash RP2040 Berhasil Diformat" });
         databaseService.clearUserProfiles().catch(console.error);
         databaseService.clearLogs("registrasi").catch(console.error);
+        setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
+      } else if (text.startsWith("RENAME_SUCCESS:")) {
+        const parts = text.split(":");
+        const slot = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+        const name = parts.length > 2 ? parts[2] : `User_${slot + 1}`;
+        addLog({ type: "system", status: "Success", message: `Slot ${slot + 1} di Flash RP2040 Diubah Menjadi "${name}"` });
+        databaseService.saveUserProfile(slot, name).catch(console.error);
+        databaseService.updateRegLogSlotName(slot, name).catch(console.error);
         setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
       } else if (text.startsWith("FLASH_SLOT:")) {
         const parts = text.split(":");

@@ -218,6 +218,37 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
     }
   };
 
+  // Ganti / Rename User Slot di Registrasi & Flash Memory RP2040
+  const handleRenameSlotDirect = async (slotIdx: number, currentName: string) => {
+    const newName = window.prompt(
+      `Ganti label / nama profil untuk Slot 0${slotIdx + 1}:\n\nContoh: "ridwan biasa", "ridwan cepat", "ayah"`,
+      currentName
+    );
+    if (!newName || !newName.trim() || newName.trim() === currentName) return;
+
+    const trimmed = newName.trim();
+    try {
+      // 1. Simpan ke database lokal SQLite
+      await databaseService.saveUserProfile(slotIdx, trimmed);
+      await databaseService.updateRegLogSlotName(slotIdx, trimmed);
+
+      // 2. Jika perangkat sedang terhubung via Bluetooth, sinkronkan ke chip Flash RP2040
+      if (connectionState === "connected") {
+        await sendCommand(`RENAME:${slotIdx}:${trimmed}`);
+      }
+
+      await loadLogsFromSQLite();
+      addLog({
+        type: "system",
+        status: "Success",
+        message: `Nama Slot 0${slotIdx + 1} diubah menjadi "${trimmed}".${connectionState === "connected" ? " Disinkronkan ke Flash RP2040." : " (Lokal)"}`,
+      });
+    } catch (err) {
+      console.error("Gagal mengubah nama slot registrasi:", err);
+      alert(`Gagal mengubah nama slot: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   // Hapus log dari SQLite (Bisa batch terpilih atau hapus semua)
   const handleDeleteLogs = async () => {
     const tabName = tab === "autentikasi" ? "Log Autentikasi" : tab === "registrasi" ? "Log Registrasi" : "Log Sistem";
@@ -664,24 +695,35 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                                   </span>
                                 </div>
 
-                                <div className="my-1.5">
-                                  <p
-                                    className="truncate"
-                                    style={{
-                                      color: isFilled ? "#0F172A" : "#94A3B8",
-                                      fontFamily: SANS,
-                                      fontWeight: 700,
-                                      fontSize: "0.95rem",
-                                    }}
-                                  >
-                                    {isFilled ? userName : "— Slot Belum Terisi —"}
-                                  </p>
-                                  <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem", marginTop: 2 }}>
-                                    {isFilled
-                                      ? `Model GHMM Biometrik Aktif di Chip RP2040`
-                                      : "Siap digunakan untuk pendaftaran pengguna baru"}
-                                  </p>
+                                <div className="my-1.5 flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <p
+                                      className="truncate"
+                                      style={{
+                                        color: isFilled ? "#0F172A" : "#94A3B8",
+                                        fontFamily: SANS,
+                                        fontWeight: 700,
+                                        fontSize: "0.95rem",
+                                      }}
+                                    >
+                                      {isFilled ? userName : "— Slot Belum Terisi —"}
+                                    </p>
+                                    {isFilled && (
+                                      <button
+                                        onClick={() => handleRenameSlotDirect(slotIdx, userName)}
+                                        className="p-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-all cursor-pointer active:scale-90"
+                                        title={`Ganti nama Slot 0${slotIdx + 1}`}
+                                      >
+                                        <Pencil size={13} />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
+                                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem", marginTop: 2 }}>
+                                  {isFilled
+                                    ? `Model GHMM Biometrik Aktif di Chip RP2040`
+                                    : "Siap digunakan untuk pendaftaran pengguna baru"}
+                                </p>
 
                                 {isFilled ? (
                                   <div className="grid grid-cols-3 gap-2 mt-3 pt-2.5 border-t border-slate-100 text-center">
@@ -707,26 +749,36 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                                 )}
                               </div>
 
-                              {/* Aksi Bar: Detail & Hapus */}
+                              {/* Aksi Bar: Detail, Rename & Hapus */}
                               {isFilled && (
                                 <div className="mt-3.5 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
                                   <button
                                     onClick={() => openDetail(logToView, "registrasi")}
-                                    className="flex-1 py-1.5 px-3 rounded-xl flex items-center justify-center gap-1.5 text-[0.62rem] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                                    className="flex-1 py-1.5 px-2.5 rounded-xl flex items-center justify-center gap-1 text-[0.62rem] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
                                     style={{ fontFamily: MONO }}
                                   >
                                     <Eye size={12} />
-                                    <span>Lihat Rincian 5 Jendela</span>
+                                    <span>Rincian</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleRenameSlotDirect(slotIdx, userName)}
+                                    className="py-1.5 px-2.5 rounded-xl flex items-center justify-center gap-1 text-[0.62rem] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                                    style={{ fontFamily: MONO }}
+                                    title={`Ganti nama Slot 0${slotIdx + 1} (${userName})`}
+                                  >
+                                    <Pencil size={12} />
+                                    <span>Rename</span>
                                   </button>
 
                                   <button
                                     onClick={() => handleDeleteSlotDirect(slotIdx, userName)}
-                                    className="py-1.5 px-3 rounded-xl flex items-center justify-center gap-1.5 text-[0.62rem] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                                    className="py-1.5 px-2.5 rounded-xl flex items-center justify-center gap-1 text-[0.62rem] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
                                     style={{ fontFamily: MONO }}
                                     title={`Hapus Slot 0${slotIdx + 1} (${userName}) dari Flash RP2040`}
                                   >
                                     <Trash2 size={12} />
-                                    <span>Hapus Slot</span>
+                                    <span>Hapus</span>
                                   </button>
                                 </div>
                               )}
