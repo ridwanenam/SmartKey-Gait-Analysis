@@ -389,14 +389,14 @@ static bool isSameUserPrefix(const char *nameA, const char *nameB) {
     size_t lenB = 0;
     while (nameB[lenB] && nameB[lenB] != ' ' && nameB[lenB] != '_' && nameB[lenB] != '-') lenB++;
     
-    // Jika kata pertama sama (case-insensitive) dan minimal 3 huruf
-    if (lenA >= 3 && lenA == lenB) {
+    // Jika kata pertama sama (case-insensitive) dan minimal 2 huruf
+    if (lenA >= 2 && lenA == lenB) {
         if (strncasecmp(nameA, nameB, lenA) == 0) return true;
     }
     
     // Jika salah satu nama adalah awalan penuh dari nama lainnya (misal "ridwan" vs "ridwan_cepat")
     size_t minLen = (strlen(nameA) < strlen(nameB)) ? strlen(nameA) : strlen(nameB);
-    if (minLen >= 4 && strncasecmp(nameA, nameB, minLen) == 0) return true;
+    if (minLen >= 3 && strncasecmp(nameA, nameB, minLen) == 0) return true;
     
     return false;
 }
@@ -494,27 +494,6 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
             }
 
             if (bestUserIdx >= 0) {
-                // Evaluasi apakah runner-up terdekat berasal dari pemilik yang sama (Intra-User)
-                float maxForeignConfidence = -1.0f;
-                for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                    if (activeUsers[i].isRegistered && (int)i != bestUserIdx) {
-                        if (!isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[i].userName)) {
-                            if (userScores[i] > maxForeignConfidence) {
-                                maxForeignConfidence = userScores[i];
-                            }
-                        }
-                    }
-                }
-
-                bool isRunnerUpSameUser = (runnerUpUserIdx >= 0) && 
-                    isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[runnerUpUserIdx].userName);
-
-                bool hasCleanMargin = false;
-                if (isRunnerUpSameUser) {
-                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= 6.0f);
-                } else {
-                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
-                }
 
                 // Pada jendela ke-5 (selesai), evaluasi gerbang kinematika fisik & penempatan saku
                 if (validWindowCounter >= TARGET_WINDOWS) {
@@ -537,23 +516,30 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
                     if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
 
-                    // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas)
-                    isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f);
+                    // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas - Calibrated)
+                    // Ayunan tangan bebas di udara:
+                    // 1) Memiliki dominansi sumbu tunggal pendulum ekstrem (> 0.88, empiris ayun tangan: 0.94 - 0.97)
+                    // 2) Tidak memiliki hentakan mekanis tapak kaki / heel-strike ke tanah (NormJerk < 0.28, empiris ayun: 0.19 - 0.25)
+                    bool isHandSwing = (avgAxisDominance > 0.88f) || (avgNormJerk < 0.28f);
+                    isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f) && !isHandSwing;
 
-                    // Gerbang Penempatan Saku Celana (Anti-Saku Jaket Longgar & Ayunan Bebas)
-                    // Syarat: Wajib ada ayunan paha (>= 15 deg) DAN terikat dalam saku (Dominansi Sumbu pitch >= 0.58 ATAU Crest Factor impuls >= 2.15)
-                    isPantsPocketPlacement = (avgThighExcursion >= 15.0f) && (avgAxisDominance >= 0.58f || avgCrestFactor >= 2.15f);
+                    // Gerbang Penempatan Saku Celana (Anti-Saku Jaket / Torso - Calibrated)
+                    // Saku jaket di torso memiliki ekskursi ayunan sangat sempit (< 30.0 deg, empiris torso: 19 - 29 deg).
+                    // Gerakan paha melangkah sejati memiliki ekskursi lebar (> 40.0 deg, teman/Rein mencapai 82 - 89 deg).
+                    bool isTorsoJacket = (avgThighExcursion < 30.0f) || 
+                                         (avgThighExcursion < 35.0f && avgAsym < 1.35f);
+                    isPantsPocketPlacement = !isTorsoJacket;
 
                     // Fused Kinematic & Placement Penalization:
-                    // Jika terjadi veto kinematika atau penempatan, jatuhkan skor kandidat ke < 40%
-                    // agar persentase numerik di aplikasi selaras dengan status merah ACCESS DENIED
-                    if (!isKinematicallyValid) {
-                        bestConfidence = fminf(bestConfidence * 0.45f, 38.0f);
-                        userScores[bestUserIdx] = bestConfidence;
-                    }
-                    if (!isPantsPocketPlacement) {
-                        bestConfidence = fminf(bestConfidence * 0.40f, 35.0f);
-                        userScores[bestUserIdx] = bestConfidence;
+                    // Jika terjadi veto kinematika atau penempatan non-gait, jatuhkan SELURUH skor slot kandidat ke < 28%
+                    // agar tidak ada profil yang menampilkan persentase tinggi saat ayun tangan atau saku jaket
+                    if (!isKinematicallyValid || !isPantsPocketPlacement) {
+                        for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                            if (activeUsers[i].isRegistered) {
+                                userScores[i] = fminf(userScores[i] * 0.30f, 28.0f);
+                            }
+                        }
+                        bestConfidence = fminf(bestConfidence * 0.30f, 28.0f);
                     }
                 }
 
@@ -561,15 +547,8 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                 telem.confidenceScore = bestConfidence;
                 telem.adaptiveThreshold = ghmm[bestUserIdx].getAdaptiveThreshold();
 
-                // Eksekusi Incremental Personalization via formula EMA jika sudah mencapai TARGET_WINDOWS dan sangat yakin (>= 90%) serta margin bersih & valid
-                if (validWindowCounter >= TARGET_WINDOWS && bestConfidence >= 90.0f && hasCleanMargin && isKinematicallyValid && isPantsPocketPlacement) {
-                    float deltaEMA = ghmm[bestUserIdx].updateModelEMA(activeUsers[bestUserIdx], currentFeatures);
-                    telem.emaDelta = deltaEMA;
-                    // Perbarui data adaptif ke Flash memori internal
-                    StorageManager::saveUser(bestUserIdx, activeUsers[bestUserIdx]);
-                } else {
-                    telem.emaDelta = 0.0f;
-                }
+                // EMA adaptif dinonaktifkan demi integritas model deterministik, pencegahan template drift, dan keausan memori Flash
+                telem.emaDelta = 0.0f;
             } else {
                 // Kasus jika belum ada profil pengguna terdaftar di memori Flash
                 Serial.println(F("[AUTH] Profil Pengguna Belum Terdaftar di Flash!"));
@@ -646,9 +625,9 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
 
                 bool hasCleanMargin = false;
                 if (isRunnerUpSameUser) {
-                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= 6.0f);
+                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= SEPARATION_MARGIN_MIN);
                 } else {
-                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= 6.0f);
+                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= SEPARATION_MARGIN_MIN);
                 }
 
                 // 2. Evaluasi Rata-Rata Kinematika Sesi Uji vs Model Golden Pemenang
@@ -671,11 +650,14 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                 if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
                 if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
 
-                // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas)
-                isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f);
+                // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas - Calibrated)
+                bool isHandSwing = (avgAxisDominance > 0.88f) || (avgNormJerk < 0.28f);
+                isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f) && !isHandSwing;
 
-                // Gerbang Penempatan Celana Ketat (Anti-Saku Jaket Longgar & Ayunan Bebas)
-                isPantsPocketPlacement = (avgThighExcursion >= 15.0f) && (avgAxisDominance >= 0.58f || avgCrestFactor >= 2.15f);
+                // Gerbang Penempatan Celana Ketat (Anti-Saku Jaket / Torso - Calibrated)
+                bool isTorsoJacket = (avgThighExcursion < 30.0f) || 
+                                     (avgThighExcursion < 35.0f && avgAsym < 1.35f);
+                isPantsPocketPlacement = !isTorsoJacket;
 
                 if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && hasCleanMargin && isKinematicallyValid && isPantsPocketPlacement) {
                     Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
@@ -693,21 +675,27 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     char doorMsg[32];
                     snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
                     ble.sendDoorCommand(doorMsg);
-                } else if (!isPantsPocketPlacement) {
-                    Serial.print(F("[AUTH VETO] Ditolak: Penempatan Saku Jaket Longgar/Torso Terdeteksi (Ayunan Paha: "));
-                    Serial.print(avgThighExcursion);
-                    Serial.print(F(" deg, Dominasi Sumbu: "));
-                    Serial.print(avgAxisDominance);
-                    Serial.print(F(", Crest: "));
-                    Serial.print(avgCrestFactor);
-                    Serial.println(F(")"));
-                    ble.sendDoorCommand("ACCESS_DENIED");
                 } else if (!isKinematicallyValid) {
-                    Serial.print(F("[AUTH VETO] Ditolak: Kinematika Fisik Menyimpang / Ayun Tangan (Deviasi: "));
+                    Serial.print(F("[AUTH VETO] Ditolak: Gerakan Ayun Tangan Bebas / Kinematika Abnormal (Jerk: "));
+                    Serial.print(avgNormJerk, 3);
+                    Serial.print(F(", AxisDom: "));
+                    Serial.print(avgAxisDominance, 2);
+                    Serial.print(F(", Deviasi: "));
                     Serial.print(deviasiCount);
                     Serial.print(F(" fitur, Gyro Delta: "));
-                    Serial.print(deltaGyro);
+                    Serial.print(deltaGyro, 1);
                     Serial.println(F(" deg/s)"));
+                    ble.sendDoorCommand("ACCESS_DENIED");
+                } else if (!isPantsPocketPlacement) {
+                    Serial.print(F("[AUTH VETO] Ditolak: Penempatan Saku Jaket / Torso (Ayunan Paha: "));
+                    Serial.print(avgThighExcursion, 1);
+                    Serial.print(F(" deg, Asym: "));
+                    Serial.print(avgAsym, 2);
+                    Serial.print(F(", Dominansi Sumbu: "));
+                    Serial.print(avgAxisDominance, 2);
+                    Serial.print(F(", Crest: "));
+                    Serial.print(avgCrestFactor, 2);
+                    Serial.println(F(")"));
                     ble.sendDoorCommand("ACCESS_DENIED");
                 } else if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && !hasCleanMargin) {
                     Serial.print(F("[AUTH AMBIGU] Akses Ditolak: Skor bersaing ketat dengan profil lain"));

@@ -118,9 +118,14 @@ public:
         }
 
         // 4. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state dengan batas bawah
+        // Tahap 1 Sanitasi: Lewati jendela transisi awal (Window 0 = start from standstill)
+        // Gunakan jendela langkah berjalan stabil (Windows 1 s.d. TARGET_WINDOWS - 1)
+        uint8_t steadyStart = (TARGET_WINDOWS >= 4) ? 1 : 0;
+        uint8_t steadyCount = TARGET_WINDOWS - steadyStart;
+
         for (uint8_t s = 0; s < NUM_STATES; ++s) {
-            uint8_t startWin = (s * TARGET_WINDOWS) / NUM_STATES;
-            uint8_t endWin = ((s + 1) * TARGET_WINDOWS) / NUM_STATES;
+            uint8_t startWin = steadyStart + (s * steadyCount) / NUM_STATES;
+            uint8_t endWin = steadyStart + ((s + 1) * steadyCount) / NUM_STATES;
             if (endWin <= startWin) endWin = startWin + 1;
             if (endWin > TARGET_WINDOWS) endWin = TARGET_WINDOWS;
 
@@ -145,10 +150,11 @@ public:
         }
 
         // 5. Evaluasi mandiri (Self-Evaluation) pada data registrasi untuk menetapkan baselineLogProb
+        // Gunakan jendela langkah berjalan stabil (steadyStart s.d. TARGET_WINDOWS - 1)
         float alphaTrain[NUM_STATES];
         for (uint8_t j = 0; j < NUM_STATES; ++j) {
             float logPi = (model.startProb[j] < EPSILON) ? logf(EPSILON) : logf(model.startProb[j]);
-            float logB = computeLogEmission(windowFeatures[0], model.means[j], model.covars[j]);
+            float logB = computeLogEmission(windowFeatures[steadyStart], model.means[j], model.covars[j]);
             alphaTrain[j] = logPi + logB;
         }
         float sumBaselineLL = -1e9f;
@@ -156,8 +162,9 @@ public:
             sumBaselineLL = logAdd(sumBaselineLL, alphaTrain[s]);
         }
         float totalTrainingNormLL = sumBaselineLL;
+        uint8_t evalSteps = 1;
 
-        for (uint8_t w = 1; w < TARGET_WINDOWS; ++w) {
+        for (uint8_t w = steadyStart + 1; w < TARGET_WINDOWS; ++w) {
             float nextAlpha[NUM_STATES];
             for (uint8_t j = 0; j < NUM_STATES; ++j) {
                 float logSum = -1e9f;
@@ -171,14 +178,15 @@ public:
             for (uint8_t s = 0; s < NUM_STATES; ++s) {
                 alphaTrain[s] = nextAlpha[s];
             }
+            evalSteps++;
             float curTotalLL = -1e9f;
             for (uint8_t s = 0; s < NUM_STATES; ++s) {
                 curTotalLL = logAdd(curTotalLL, alphaTrain[s]);
             }
-            totalTrainingNormLL += (curTotalLL / (float)(w + 1));
+            totalTrainingNormLL += (curTotalLL / (float)evalSteps);
         }
 
-        float avgBaseLL = totalTrainingNormLL / (float)TARGET_WINDOWS;
+        float avgBaseLL = totalTrainingNormLL / (float)evalSteps;
         if (avgBaseLL > -5.0f || avgBaseLL < -60.0f) {
             avgBaseLL = BASE_LOG_THRESHOLD;
         }
@@ -225,60 +233,52 @@ public:
         // Normalisasi Panjang Urutan (Length-Normalized Log-Likelihood)
         float normalizedLogProb = totalLogProb / (float)(windowStep > 0 ? windowStep : 1);
 
-        // Update Peak Tracking untuk ambang batas adaptif menggunakan normalized LL
-        peakWindowScores[peakIndex] = normalizedLogProb;
-        peakIndex = (peakIndex + 1) % 5;
-
-        // Rata-ratakan hanya sebanyak jendela yang sudah benar-benar masuk (tanpa terdistorsi nilai dummy awal)
-        uint8_t activeCount = (windowStep < 5) ? (windowStep > 0 ? windowStep : 1) : 5;
-        float averagePeak = 0.0f;
-        for (uint8_t i = 0; i < activeCount; ++i) {
-            averagePeak += peakWindowScores[i];
-        }
-        averagePeak /= (float)activeCount;
-
-        // Tautkan ambang batas adaptif ke Baseline Log-Likelihood Profil Registrasi Pengguna
+        // Tautkan ambang batas secara solid ke Golden Baseline Registrasi Profil Pengguna
+        // Tidak lagi ditarik melar ke bawah oleh sinyal anomali atau penyerang (Anti-Threshold Drift)
         float baseLL = (model.baselineLogProb <= -5.0f && model.baselineLogProb >= -60.0f) 
                        ? model.baselineLogProb : BASE_LOG_THRESHOLD;
         
-        float dynamicTh = averagePeak * 1.25f; // Margin toleransi 25%
-
-        // Batas Bawah Keras (Hard Floor): Ambang batas tidak boleh jatuh lebih rendah dari (baseLL - 5.5)
-        // Menjaga agar toleransi adaptif tidak melar berlebihan saat anomali
-        float hardFloorTh = baseLL - 5.5f;
-        if (dynamicTh < hardFloorTh) {
-            dynamicTh = hardFloorTh;
-        }
-        // Batas Atas: Ambang batas tidak boleh lebih tinggi dari (baseLL - 1.0) agar langkah normal pengguna sah tetap nyaman lolos
-        if (dynamicTh > baseLL - 1.0f) {
-            dynamicTh = baseLL - 1.0f;
-        }
-
-        currentAdaptiveThreshold = dynamicTh;
+        // Ambang batas lolos (80.0% CIR) dipatok pada (baseLL - 3.5 log-unit)
+        // Langkah normal pengguna sah memiliki log-prob dalam rentang (baseLL +/- 2.5 log-unit)
+        currentAdaptiveThreshold = baseLL - 3.5f;
 
         return normalizedLogProb;
     }
 
     // Mengonversi log-likelihood ternormalisasi menjadi nilai keyakinan persentase (Confidence Score 0 - 100%)
+    // Skala Terkalibrasi Proporsional Penuh (0.0% s.d. 100.0%) Bebas Ceiling Clamping, Berbasis Jarak Baseline Ideal
     float calculateConfidenceScore(float normLogProb) const {
         if (normLogProb <= -70.0f) return 0.0f; // Anomali ekstrem
         
         float baselineTh = (currentAdaptiveThreshold > -5.0f) ? BASE_LOG_THRESHOLD : currentAdaptiveThreshold;
-        float margin = fabsf(baselineTh);
-        if (margin < 1.0f) margin = 1.0f;
 
-        // Titik ambang batas tepat (normLogProb == baselineTh) adalah 80.0% (Ambang Batas Akses Sah)
+        // Titik ambang kelulusan: baselineTh (skor 80.0%)
+        // Titik baseline golden registrasi: baseLL = baselineTh + 3.5f (skor 91.0%)
+        // Di atas baselineTh, skor bertumbuh secara proporsional halus hingga 99.5% tanpa ceiling kaku
+        // Di bawah baselineTh, skor turun tajam menuju 0.0%
         if (normLogProb >= baselineTh) {
-            // Skala 80.0% s.d. 98.0% untuk sinyal yang di atas threshold
-            float ratio = (normLogProb - baselineTh) / margin;
-            if (ratio > 1.0f) ratio = 1.0f;
-            float score = 80.0f + (ratio * 18.0f);
-            return (score > 100.0f) ? 100.0f : score;
+            float delta = normLogProb - baselineTh;
+            if (delta <= 3.5f) {
+                // Rentang dari Ambang Batas (80.0%) menuju Golden Baseline Registrasi (91.0%)
+                return 80.0f + (delta / 3.5f) * 11.0f;
+            } else {
+                // Melampaui Golden Baseline (lebih konsisten dari saat registrasi):
+                // Bertumbuh asimtotik dari 91.0% menuju 99.5% tanpa terhambat ceiling kaku
+                float excess = delta - 3.5f;
+                float score = 91.0f + 8.8f * (1.0f - expf(-0.35f * excess));
+                return (score > 100.0f) ? 100.0f : score;
+            }
         } else {
-            // Skala 80.0% turun tajam ke 0.0% untuk sinyal di bawah threshold
-            float ratio = (baselineTh - normLogProb) / margin;
-            float score = 80.0f - (ratio * 100.0f);
-            return (score < 0.0f) ? 0.0f : score;
+            float drop = baselineTh - normLogProb;
+            if (drop <= 10.0f) {
+                // Penurunan linear tajam: 10 log-unit di bawah threshold jatuh ke 20.0%
+                return 80.0f - (drop / 10.0f) * 60.0f;
+            } else {
+                // Penurunan lanjut dari 20.0% menuju 0.0% (non-gait/anomali berat)
+                float excessDrop = drop - 10.0f;
+                float score = 20.0f - (excessDrop / 10.0f) * 20.0f;
+                return (score < 0.0f) ? 0.0f : score;
+            }
         }
     }
 

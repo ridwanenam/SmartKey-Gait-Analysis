@@ -472,14 +472,14 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     if (isIntraUser) {
       if (closestForeign) {
         margin = parseFloat((best.score - closestForeign.score).toFixed(1));
-        isSafe = margin >= 6.0;
+        isSafe = margin >= 3.0;
       } else {
         margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
         isSafe = true; // Tidak ada pengguna asing yang bersaing
       }
     } else {
       margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
-      isSafe = margin >= 6.0;
+      isSafe = margin >= 3.0;
     }
 
     return {
@@ -965,7 +965,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
       ctx.fillStyle = "#38BDF8";
       ctx.font = "bold 8.5px monospace";
-      ctx.fillText(`SHADOW GATES: Jerk=${jerkStr} | Asym=${asymStr} | Exc=${excStr} | CF=${cfStr} | Dom=${adStr}`, 38, 408);
+      ctx.fillText(`ACTIVE GATES: Jerk=${jerkStr} | Asym=${asymStr} | Exc=${excStr} | CF=${cfStr} | Dom=${adStr}`, 38, 408);
 
       ctx.fillStyle = "#94A3B8";
       ctx.font = "8px monospace";
@@ -1048,8 +1048,8 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.fillStyle = headMarginInfo.isSafe ? "#4ADE80" : "#FBBF24";
         ctx.font = "bold 10px monospace";
         const tag = headMarginInfo.isIntraUser 
-          ? (headMarginInfo.isSafe ? "AMAN (Intra-User)" : "TIPIS < 6.0%") 
-          : (headMarginInfo.isSafe ? "AMAN ≥ 6.0%" : "TIPIS < 6.0%");
+          ? (headMarginInfo.isSafe ? "AMAN (Intra-User)" : "TIPIS < 3.0%") 
+          : (headMarginInfo.isSafe ? "AMAN ≥ 3.0%" : "TIPIS < 3.0%");
         ctx.fillText(`Margin Separasi Biometrik: +${headMarginInfo.margin}% (${tag})`, 40, marginBoxY + 18);
 
         ctx.fillStyle = "#E2E8F0";
@@ -1788,18 +1788,18 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                       </div>
                       <div>
                         <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
-                          Diagnostik Invarian Fisik & Shadow Gates (Tahap 0)
+                          Gerbang Invarian Fisik (Tahap 2 Active Veto)
                         </p>
                         <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem" }}>
-                          Metrik diskriminator hentakan & asimetri gelombang (Edge RP2040 Telemetry)
+                          Diskriminator hentakan tumit, ekskursi paha & 3D dispersi sumbu (Hardware Enforced)
                         </p>
                       </div>
                     </div>
                     <span
-                      className="px-2 py-0.5 rounded text-[0.55rem] font-bold bg-cyan-50 text-cyan-800 border border-cyan-200"
+                      className="px-2 py-0.5 rounded text-[0.55rem] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200"
                       style={{ fontFamily: MONO }}
                     >
-                      Shadow Mode (Logging Only)
+                      Active Veto Gates
                     </span>
                   </div>
 
@@ -1812,7 +1812,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         {headParsed.gates?.normJerk !== undefined && headParsed.gates.normJerk !== 0 ? headParsed.gates.normJerk.toFixed(3) : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Langkah nyata: ≥0.25 | Ayun bebas: ~0.11
+                        Hentakan kaki: ≥0.28 | Ayun tangan: &lt;0.28
                       </p>
                     </div>
 
@@ -1824,7 +1824,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         {headParsed.gates?.asym !== undefined && headParsed.gates.asym !== 0 ? headParsed.gates.asym.toFixed(2) : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Kaki melangkah: ≥1.5 | Ayunan: ~1.0-1.2
+                        Langkah paha: ≥1.35 | Jaket/Torso: &lt;1.35
                       </p>
                     </div>
 
@@ -1836,7 +1836,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         {headParsed.gates?.excursion !== undefined && headParsed.gates.excursion !== 0 ? `${headParsed.gates.excursion.toFixed(1)}°` : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Syarat saku celana: ≥ 15.0°
+                        Syarat paha melangkah: ≥ 30.0° | Jaket: &lt; 30.0°
                       </p>
                     </div>
 
@@ -1848,7 +1848,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         {headParsed.gates?.crestFactor !== undefined && headParsed.gates.crestFactor !== 0 ? headParsed.gates.crestFactor.toFixed(2) : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Hentakan saku celana: ≥ 2.15
+                        Hentakan akselerasi: ≥ 2.00
                       </p>
                     </div>
 
@@ -1860,7 +1860,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         {headParsed.gates?.axisDominance !== undefined && headParsed.gates.axisDominance !== 0 ? headParsed.gates.axisDominance.toFixed(2) : "—"}
                       </p>
                       <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Terkekang saku celana: ≥ 0.58
+                        Ayun tangan 1D: &gt; 0.88 | Kaki paha 3D: ≤ 0.88
                       </p>
                     </div>
 

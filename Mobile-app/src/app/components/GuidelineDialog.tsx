@@ -158,7 +158,7 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
       {
         label: "10. Personalisasi Inkremental (Δ EMA)",
         text: "Besaran koreksi pembaruan halus pada nilai rata-rata (means) model biometrik di flash memori via formula Exponential Moving Average (faktor pembobot α = 0.10). Matriks kovarian dibekukan saat adaptasi agar ambang batas (threshold) tidak hanyut (drift).",
-        indicator: "Rentang koreksi tipikal ±0.001 s.d. ±0.025. Hanya aktif saat verifikasi sangat yakin (CIR ≥ 90.0%) DAN memiliki margin keunggulan bersih (Separation Margin ≥ 6.0%) terhadap slot pengguna lain untuk mencegah template poisoning.",
+        indicator: "Rentang koreksi tipikal ±0.001 s.d. ±0.025. Hanya aktif saat verifikasi sangat yakin (CIR ≥ 90.0%) DAN memiliki margin keunggulan bersih (Separation Margin ≥ 3.0%) terhadap slot pengguna lain untuk mencegah template poisoning.",
       },
       {
         label: "11. Kebebasan Orientasi Saku (100% Invarian Orientasi)",
