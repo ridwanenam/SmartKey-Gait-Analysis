@@ -448,7 +448,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       } else if (text.startsWith("FLASH_SLOT:")) {
         const parts = text.split(":");
         const slotIdx = parseInt(parts[1], 10);
-        if (slotIdx >= 0 && slotIdx < 4) {
+        if (slotIdx >= 0 && slotIdx < 6) {
           const isReg = parts[2] === "1";
           const name = parts.length > 3 ? parts[3] : `User_${slotIdx + 1}`;
 

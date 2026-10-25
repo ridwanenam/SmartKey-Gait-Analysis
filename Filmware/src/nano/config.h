@@ -22,7 +22,7 @@ constexpr float EPSILON              = 1e-6f;                        // Mencegah
 // ==========================================
 // 3. PARAMETER ARSITEKTUR GHMM & ADAPTIF
 // ==========================================
-constexpr uint8_t MAX_USERS          = 5;                            // Kapasitas memori untuk 5 pengguna
+constexpr uint8_t MAX_USERS          = 6;                            // Kapasitas memori untuk 6 pengguna
 constexpr uint8_t NUM_STATES         = 2;                            // Jumlah hidden states siklus melangkah (Dual-Phase: Kaki Kanan vs Kiri)
 constexpr uint8_t NUM_FEATURES       = 5;                            // 5 Fitur: Mean, Var, Stride Regularity, Stride Period (k_peak), Heel-Strike Impact
 constexpr float   EMA_ALPHA          = 0.10f;                        // Smoothing factor pembaruan inkremental konservatif

@@ -26,6 +26,18 @@ volatile bool g_bleNeedsAdvertise = false;
 // Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms)
 unsigned long previousSampleTime = 0;
 
+// Watchdog Heartbeat Non-Blocking untuk auto-recovery saat hang / SPI deadlock
+// Menggunakan mbed::Ticker & CMSIS NVIC_SystemReset() tanpa mengaktifkan register bootrom watchdog silicon
+constexpr uint32_t WATCHDOG_HEARTBEAT_TIMEOUT_MS = 8000; // 8 detik batas toleransi hang
+volatile uint32_t g_lastLoopHeartbeat = 0;
+mbed::Ticker g_watchdogTicker;
+
+void watchdogCheckCallback() {
+    if (g_lastLoopHeartbeat > 0 && (millis() - g_lastLoopHeartbeat > WATCHDOG_HEARTBEAT_TIMEOUT_MS)) {
+        NVIC_SystemReset();
+    }
+}
+
 // Deklarasi Prototip Fungsi Internal
 void handleIncomingCommands();
 void processIdleState();
@@ -52,10 +64,17 @@ void setup() {
         while (1);
     }
 
+    // 4. Aktifkan Software Heartbeat Watchdog (Periksa tiap 1.0 detik)
+    g_lastLoopHeartbeat = millis();
+    g_watchdogTicker.attach(&watchdogCheckCallback, std::chrono::seconds(1));
+
     Serial.println(F("[OK] Sistem Smart Key Wearable Siap (Multi-User Idle Mode)"));
 }
 
 void loop() {
+    // 0. Update Heartbeat Watchdog
+    g_lastLoopHeartbeat = millis();
+
     // 1. Polling Event Komunikasi BLE
     ble.poll();
     handleIncomingCommands();
@@ -221,9 +240,9 @@ void handleIncomingCommands() {
         // Perintah Sinkronisasi Status Flash Memori: "SYNC_FLASH" atau "GET_USERS"
         else if (strcmp(cmd, "SYNC_FLASH") == 0 || strcmp(cmd, "GET_USERS") == 0) {
             reloadUsersFromFlash();
-            // Hanya kirim 4 slot (0 sampai 3) yang relevan dengan UI Mobile App
+            // Kirim seluruh slot (0 sampai MAX_USERS-1) yang relevan dengan UI Mobile App
             // Berikan jeda 80ms antar paket agar BLE connection interval Nina W102 (45-75ms) tidak menumpuk/menimpa notifikasi
-            for (uint8_t i = 0; i < 4; ++i) {
+            for (uint8_t i = 0; i < MAX_USERS; ++i) {
                 char slotMsg[48];
                 if (activeUsers[i].isRegistered) {
                     snprintf(slotMsg, sizeof(slotMsg), "FLASH_SLOT:%d:1:%s", i, activeUsers[i].userName);
@@ -573,7 +592,7 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
 
             if (bestUserIdx >= 0) {
                 // Kirim breakdown skor kemiripan seluruh slot yang terdaftar ke Mobile App
-                char scoresMsg[64];
+                char scoresMsg[96];
                 int offset = snprintf(scoresMsg, sizeof(scoresMsg), "SCORES:");
                 for (uint8_t i = 0; i < MAX_USERS; ++i) {
                     if (activeUsers[i].isRegistered && offset < (int)sizeof(scoresMsg) - 10) {

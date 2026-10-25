@@ -160,7 +160,7 @@ class DatabaseService {
         updated_at TEXT NOT NULL
       );
 
-      -- Tabel 6: Profil Slot Pengguna (Hingga 4 Pengguna)
+      -- Tabel 6: Profil Slot Pengguna (Hingga 6 Pengguna)
       CREATE TABLE IF NOT EXISTS user_profiles (
         slot INTEGER PRIMARY KEY NOT NULL,
         name TEXT NOT NULL,
@@ -490,7 +490,7 @@ class DatabaseService {
   }
 
   // ==========================================
-  // 6. PROFIL SLOT PENGGUNA (HINGGA 4 USER)
+  // 6. PROFIL SLOT PENGGUNA (HINGGA 6 USER)
   // ==========================================
   public async getUserProfiles(): Promise<UserProfile[]> {
     await this.initialize();

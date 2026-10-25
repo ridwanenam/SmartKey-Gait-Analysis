@@ -191,7 +191,7 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
         `Apakah Anda yakin ingin menghapus "${rec.slotUser}"?\n\nProfil ini akan dihapus dari memori Flash RP2040 dan database aplikasi secara permanen.`
       )
     ) {
-      if (slotIdx >= 0 && slotIdx < 4) {
+      if (slotIdx >= 0 && slotIdx < 6) {
         await deleteFlashUser(slotIdx);
       }
       await databaseService.deleteLogsByIds("registrasi", [rec.id]);
@@ -272,7 +272,7 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
             const match = r.slotUser.match(/Slot\s+(\d+)/i);
             if (match) {
               const slotIdx = parseInt(match[1], 10) - 1; // 1-indexed ke 0-indexed
-              if (slotIdx >= 0 && slotIdx < 4) {
+              if (slotIdx >= 0 && slotIdx < 6) {
                 await deleteFlashUser(slotIdx);
               }
             }
@@ -631,15 +631,15 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                               </span>
                             </div>
                             <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem" }}>
-                              Kapasitas 4 Slot Pengguna · Tersimpan permanen di chip flash internal
+                              Kapasitas 6 Slot Pengguna · Tersimpan permanen di chip flash internal
                             </p>
                           </div>
                         </div>
                       </div>
 
-                      {/* 4 Slot Pengguna Terpadu */}
+                      {/* 6 Slot Pengguna Terpadu */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {[0, 1, 2, 3].map((slotIdx) => {
+                        {[0, 1, 2, 3, 4, 5].map((slotIdx) => {
                           const profile = userProfiles.find((p) => p.slot === slotIdx);
                           const matchingLog = regLogs.find((r) => r.slotUser.includes(`Slot ${slotIdx + 1}`));
                           const isFilled = Boolean(profile || matchingLog);

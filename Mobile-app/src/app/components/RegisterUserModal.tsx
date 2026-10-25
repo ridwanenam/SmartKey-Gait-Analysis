@@ -43,7 +43,7 @@ export function RegisterUserModal({ open, onClose, onStart }: RegisterUserModalP
       setRegLogs(logs);
 
       // Auto-sinkronisasi mandiri: jika ada log registrasi tapi belum ada di user_profiles, simpan otomatis
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         const matchingLog = logs.find((r) => r.slotUser.includes(`Slot ${i + 1}`));
         const existingProf = userProfiles.find((p) => p.slot === i);
         if (matchingLog && !existingProf) {
@@ -54,7 +54,7 @@ export function RegisterUserModal({ open, onClose, onStart }: RegisterUserModalP
 
       // Hitung slot terisi
       const occupiedSlots = new Set<number>();
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         const prof = userProfiles.find((p) => p.slot === i);
         const matchingLog = logs.find((r) => r.slotUser.includes(`Slot ${i + 1}`));
         if (prof || matchingLog) {
@@ -67,7 +67,7 @@ export function RegisterUserModal({ open, onClose, onStart }: RegisterUserModalP
         let nextSlot = prev;
         if (occupiedSlots.has(prev)) {
           let emptyFound = -1;
-          for (let i = 0; i < 4; i++) {
+          for (let i = 0; i < 6; i++) {
             if (!occupiedSlots.has(i)) {
               emptyFound = i;
               break;
@@ -177,7 +177,7 @@ export function RegisterUserModal({ open, onClose, onStart }: RegisterUserModalP
                   Pendaftaran Pengguna Baru
                 </h3>
                 <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.62rem" }}>
-                  Kapasitas 4 Slot Pemilik Smart Key
+                  Kapasitas 6 Slot Pemilik Smart Key
                 </p>
               </div>
             </div>
@@ -230,18 +230,18 @@ export function RegisterUserModal({ open, onClose, onStart }: RegisterUserModalP
               </span>
             </div>
 
-            {/* Pemilihan 4 Slot */}
+            {/* Pemilihan 6 Slot */}
             <div>
               <label style={{ color: "#334155", fontFamily: SANS, fontSize: "0.75rem", fontWeight: 600 }}>
-                Pilih Slot Pengguna (1 - 4)
+                Pilih Slot Pengguna (1 - 6)
               </label>
               <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.6rem", marginTop: 2 }}>
                 Pilih slot kosong atau pilih slot lama untuk menimpa:
               </p>
 
-              {/* Grid 4 Slot */}
+              {/* Grid 6 Slot */}
               <div className="grid grid-cols-2 gap-2 mt-2">
-                {[0, 1, 2, 3].map((slotIdx) => {
+                {[0, 1, 2, 3, 4, 5].map((slotIdx) => {
                   const { isFilled, name } = getSlotInfo(slotIdx);
                   const isSelected = selectedSlot === slotIdx;
 
