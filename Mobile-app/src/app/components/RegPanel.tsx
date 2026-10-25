@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { Loader2, CheckCircle2, Activity, ShieldCheck, Compass, Cpu, Layers } from "lucide-react";
+import { Loader2, CheckCircle2, Activity, ShieldCheck, Layers } from "lucide-react";
 import { LiveSignalGraph } from "./LiveSignalGraph";
 import { BLETelemetry, LiveSample } from "../context/BLEContext";
 
@@ -201,61 +201,13 @@ export function RegPanel({ isScanning, progress, total, telemetry, liveSample = 
             height={190}
           />
 
-          {/* KELOMPOK 1: STATUS PEREKAMAN & KUOTA TEMPLATE GAIT */}
-          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Cpu size={13} className="text-blue-600" />
-              <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
-                1. Status Perekaman & Kuota Template Gait
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Target Kuota Jendela
-                </p>
-                <p style={{ color: isScanning ? "#16A34A" : "#94A3B8", fontFamily: MONO, fontSize: "0.92rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning ? `${progress} / ${total} Jendela` : "5 Jendela Valid"}
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  {allDone ? "100% Selesai Terkumpul" : "Akumulasi Langkah Nyata"}
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Slot Pengguna Terdaftar
-                </p>
-                <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 1 }}>
-                  Slot 1 (Pemilik Utama)
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Tersimpan di Flash RP2040
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Status Model Awal
-                </p>
-                <p style={{ color: allDone ? "#16A34A" : "#059669", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 1 }}>
-                  GHMM (5-STATE)
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Left-to-Right Topologi
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* KELOMPOK 2: VEKTOR CIRI 5-FITUR (FEATURE EXTRACTION) */}
+          {/* VEKTOR CIRI 5-FITUR (FEATURE EXTRACTION) */}
           <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
                 <Layers size={13} className="text-emerald-600" />
                 <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
-                  2. Vektor Ciri 5-Fitur Jendela Aktif #{progress > 0 ? progress : 1}
+                  Vektor Ciri 5-Fitur Jendela Aktif #{progress > 0 ? progress : 1}
                 </p>
               </div>
               <span style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.50rem" }}>
@@ -302,56 +254,6 @@ export function RegPanel({ isScanning, progress, total, telemetry, liveSample = 
                   {isScanning && progress > 0 && telemetry?.kurtosis !== undefined ? `${telemetry.kurtosis.toFixed(1)} %g` : "—"}
                 </p>
                 <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Ground Reaction</p>
-              </div>
-            </div>
-          </div>
-
-          {/* KELOMPOK 3: ORIENTASI SAKU & KEADAAN SENSOR */}
-          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Compass size={13} className="text-amber-600" />
-              <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
-                3. Orientasi Saku & Keadaan Sensor
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Orientasi Saku
-                </p>
-                <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  100% BEBAS
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Invarian Orientasi Murni
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Status Uji ZUPT
-                </p>
-                <p style={{ color: isScanning ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "#16A34A" : "#D97706") : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning
-                    ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "● VALID (MELANGKAH)" : "○ DIAM / STATIS")
-                    : "—"}
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Rotasi Gyro &gt; 0.85 (rad/s)²
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Model Adaptation
-                </p>
-                <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  BASELINE MURNI
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Tanpa Inkremental EMA
-                </p>
               </div>
             </div>
           </div>

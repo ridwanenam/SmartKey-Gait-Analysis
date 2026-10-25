@@ -103,7 +103,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
       // Filter ketat Base Slots: Hanya slot yang benar-benar aktif/terdaftar
       const validSlots: Array<{ slot: number; name: string; record?: RegLogRecord }> = [];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         const prof = profiles.find((p) => p.slot === i);
         const matchingLog = regLogs.find((r) => r.slotUser.includes(`Slot ${i + 1}`));
         if (prof || matchingLog) {
@@ -1470,14 +1470,8 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
               <div>
                 <div className="flex items-center gap-2">
                   <h3 style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.95rem" }}>
-                    Komparasi Gait · PR Diff Inspector
+                    Komparasi Gait
                   </h3>
-                  <span
-                    className="px-2 py-0.5 rounded text-[0.55rem] font-bold uppercase tracking-wider bg-teal-100 text-teal-800 border border-teal-300"
-                    style={{ fontFamily: MONO }}
-                  >
-                    Lab Debugging
-                  </span>
                 </div>
                 <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.6rem" }}>
                   Bandingkan Golden Template (Base) dengan Sesi Uji Autentikasi (Head)

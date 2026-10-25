@@ -16,14 +16,12 @@ import {
   Sliders,
   Maximize2,
   Layers,
-  Compass,
   Database,
   Cpu,
   TrendingUp,
   UserCheck,
   ChevronDown,
   ChevronUp,
-  RefreshCw,
   Users,
   HardDrive,
   Smartphone,
@@ -997,20 +995,18 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                 </div>
               </div>
 
-              {/* 2. PARAMETER KINEMATIKA TERSTRUKTUR DALAM 3 KELOMPOK */}
+              {/* PARAMETER KINEMATIKA TERSTRUKTUR */}
               <div className="space-y-3">
-                {/* GRUP A: INFERENSI GHMM (UNTUK AUTH) ATAU STATUS TEMPLATE (UNTUK REGISTRASI) */}
-                <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/60">
-                  <div className="flex items-center gap-1.5 mb-2.5">
-                    <Cpu size={14} className="text-blue-600" />
-                    <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
-                      {isAuth ? "1. Evaluasi Keputusan & Inferensi GHMM" : "1. Status Perekaman & Template Gait"}
-                    </p>
-                  </div>
-
-                  {isAuth ? (
-                    <>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {/* GRUP A: INFERENSI GHMM (HANYA UNTUK AUTH) */}
+                {isAuth && (
+                  <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/60">
+                    <div className="flex items-center gap-1.5 mb-2.5">
+                      <Cpu size={14} className="text-blue-600" />
+                      <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
+                        Evaluasi Keputusan & Inferensi GHMM
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
                         <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
                           Skor Keyakinan (CIR)
@@ -1085,22 +1081,11 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                             transition={{ duration: 0.2 }}
                             className="border-t border-slate-100 p-3 flex flex-col gap-2.5"
                           >
-                            {/* Bar info & tombol refresh sinkronisasi */}
+                            {/* Bar info */}
                             <div className="flex items-center justify-between pb-1 border-b border-slate-100">
                               <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.58rem" }}>
                                 Daftar Slot Pemilik yang Dievaluasi:
                               </p>
-                              <button
-                                type="button"
-                                onClick={refreshProfiles}
-                                disabled={isSyncingBreakdown}
-                                className="flex items-center gap-1 px-2 py-0.5 rounded text-[0.55rem] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-                                style={{ fontFamily: MONO }}
-                                title="Sinkronkan daftar slot profil terkini dari SQLite"
-                              >
-                                <RefreshCw size={10} className={isSyncingBreakdown ? "animate-spin text-blue-600" : "text-slate-500"} />
-                                <span>{isSyncingBreakdown ? "Menyegarkan..." : "Refresh Status"}</span>
-                              </button>
                             </div>
 
                             {/* Item per slot terdaftar */}
@@ -1192,54 +1177,15 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                         )}
                       </AnimatePresence>
                     </div>
-                  </>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                          Target Kuota Jendela
-                        </p>
-                        <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.95rem", fontWeight: 800, marginTop: 2 }}>
-                          {Math.min(regRec?.totalJendela || 5, 5)} / 5 Jendela
-                        </p>
-                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                          100% Selesai Terkumpul
-                        </p>
-                      </div>
-
-                      <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                          Slot Pengguna Terdaftar
-                        </p>
-                        <p style={{ color: "#2563EB", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
-                          {regRec?.slotUser || "Slot 1"}
-                        </p>
-                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                          Tersimpan di Flash RP2040
-                        </p>
-                      </div>
-
-                      <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                          Status Model Awal
-                        </p>
-                        <p style={{ color: "#059669", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
-                          GHMM TERVERIFIKASI
-                        </p>
-                        <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                          5 Hidden States Terpetakan
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* GRUP B: VEKTOR CIRI 5-FITUR (FEATURE EXTRACTION) */}
                 <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/60">
                   <div className="flex items-center gap-1.5 mb-2.5">
                     <Layers size={14} className="text-emerald-600" />
                     <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
-                      2. Vektor Ciri 5-Fitur Biometrik (Feature Extraction)
+                      Vektor Ciri 5-Fitur Biometrik (Feature Extraction)
                     </p>
                   </div>
 
@@ -1305,54 +1251,6 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                     </div>
                   </div>
                 </div>
-
-                {/* GRUP C: ORIENTASI SAKU & ADAPTASI MODEL */}
-                <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/60">
-                  <div className="flex items-center gap-1.5 mb-2.5">
-                    <Compass size={14} className="text-amber-600" />
-                    <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
-                      3. Orientasi Saku & Adaptasi Model (EMA)
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                        Orientasi Saku
-                      </p>
-                      <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
-                        100% BEBAS
-                      </p>
-                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        Invarian Orientasi Murni
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                        Pembaruan Inkremental (Δ EMA)
-                      </p>
-                      <p style={{ color: summaryMetrics.emaDelta !== "—" && summaryMetrics.emaDelta !== "+0.000" ? "#059669" : "#64748B", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
-                        {summaryMetrics.emaDelta !== "—" ? summaryMetrics.emaDelta : "Tidak Ada"}
-                      </p>
-                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        {isAuth ? "Aktif jika CIR ≥ 90% (Margin ≥ 6%)" : "Baseline Murni Registrasi"}
-                      </p>
-                    </div>
-
-                    <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                      <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem", textTransform: "uppercase" }}>
-                        Durasi & Frekuensi Sampling
-                      </p>
-                      <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.85rem", fontWeight: 800, marginTop: 2 }}>
-                        {summaryMetrics.durationSec} s
-                      </p>
-                      <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.5rem", marginTop: 2 }}>
-                        100 Hz Internal / 20 Hz Live BLE
-                      </p>
-                    </div>
-                  </div>
-                </div>
               </div>
 
               {/* 3. TABEL RINCIAN PER JENDELA (KOLOM DIKELOMPOKKAN DENGAN RAPI) */}
@@ -1376,87 +1274,91 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                         <tr>
                           <th className="py-2.5 px-3 w-20">Jendela</th>
                           <th className="py-2.5 px-3">Vektor Ciri 5D (Feature Extraction)</th>
-                          <th className="py-2.5 px-3">{isAuth ? "Evaluasi GHMM & Ambang" : "Status Kuota Jendela"}</th>
-                          <th className="py-2.5 px-3 text-right">ZUPT & Status</th>
+                          {isAuth && <th className="py-2.5 px-3">Evaluasi GHMM & Ambang</th>}
+                          <th className="py-2.5 px-3 text-right">{isAuth ? "Status Ambang" : "Status Langkah"}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {parsedDetails.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
-                            {/* Kolom 1: Jendela & Waktu */}
-                            <td className="py-2.5 px-3 font-bold text-slate-800 align-top">
-                              #{item.step || idx + 1}
-                              <span className="block text-[0.5rem] text-slate-400 font-normal">
-                                {item.time?.split(" ")[1] || `${((idx + 1) * 1.5).toFixed(1)}s`}
-                              </span>
-                            </td>
+                        {parsedDetails.map((item, idx) => {
+                          const confNum = parseFloat(String(item.confidence ?? item.score ?? 0));
+                          const isAbove80 = !isNaN(confNum) ? confNum >= 80.0 : false;
 
-                            {/* Kolom 2: Vektor Ciri 5D Rapi */}
-                            <td className="py-2.5 px-3 text-slate-700 align-top">
-                              <div className="space-y-0.5">
-                                <p className="font-semibold text-slate-800">
-                                  μ: <span className="text-emerald-700">{item.mean ?? "—"}°/s</span> · σ²: <span>{item.variance ?? "—"}</span> · R: <span>{item.stdDev ?? "—"}%</span>
-                                </p>
-                                <p className="text-[0.55rem] text-slate-500">
-                                  Periode (k): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"} smp</span> · Hentakan: <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"} %g</span>
-                                </p>
-                              </div>
-                            </td>
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
+                              {/* Kolom 1: Jendela & Waktu */}
+                              <td className="py-2.5 px-3 font-bold text-slate-800 align-top">
+                                #{item.step || idx + 1}
+                                <span className="block text-[0.5rem] text-slate-400 font-normal">
+                                  {item.time?.split(" ")[1] || `${((idx + 1) * 1.5).toFixed(1)}s`}
+                                </span>
+                              </td>
 
-                            {/* Kolom 3: GHMM / Kuota */}
-                            <td className="py-2.5 px-3 align-top">
-                              {isAuth ? (
+                              {/* Kolom 2: Vektor Ciri 5D Rapi */}
+                              <td className="py-2.5 px-3 text-slate-700 align-top">
                                 <div className="space-y-0.5">
-                                  <p className="font-bold text-blue-600">
-                                    Skor: {(() => {
-                                      const rawVal = item.confidence ?? item.score;
-                                      if (rawVal === undefined || rawVal === null || rawVal === "—") return "—";
-                                      const strVal = String(rawVal);
-                                      return strVal.endsWith("%") ? strVal : `${strVal}%`;
-                                    })()}
-                                    <span className="text-slate-400 font-normal text-[0.5rem] ml-1.5">
-                                      LL: {item.logLikelihood ?? "—"}
-                                    </span>
+                                  <p className="font-semibold text-slate-800">
+                                    μ: <span className="text-emerald-700">{item.mean ?? "—"}°/s</span> · σ²: <span>{item.variance ?? "—"}</span> · R: <span>{item.stdDev ?? "—"}%</span>
                                   </p>
-                                  <p className="text-[0.52rem] text-slate-500">
-                                    Th: <span className="text-amber-600">{item.adaptiveThreshold ?? "—"}</span> · Δ: <span className="text-emerald-600">{item.emaDelta ?? "—"}</span>
+                                  <p className="text-[0.55rem] text-slate-500">
+                                    Periode (k): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"} smp</span> · Hentakan: <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"} %g</span>
                                   </p>
                                 </div>
-                              ) : (
-                                <div className="space-y-0.5">
-                                  <p className="font-bold text-slate-700">
-                                    Langkah #{idx + 1} Terkumpul
-                                  </p>
-                                  <p className="text-[0.52rem] text-slate-400">
-                                    Emisi Gaussian Terkalibrasi
-                                  </p>
-                                </div>
+                              </td>
+
+                              {/* Kolom 3: GHMM (Hanya ditampilkan pada Auth) */}
+                              {isAuth && (
+                                <td className="py-2.5 px-3 align-top">
+                                  <div className="space-y-0.5">
+                                    <p className="font-bold text-blue-600">
+                                      Skor: {(() => {
+                                        const rawVal = item.confidence ?? item.score;
+                                        if (rawVal === undefined || rawVal === null || rawVal === "—") return "—";
+                                        const strVal = String(rawVal);
+                                        return strVal.endsWith("%") ? strVal : `${strVal}%`;
+                                      })()}
+                                      <span className="text-slate-400 font-normal text-[0.5rem] ml-1.5">
+                                        LL: {item.logLikelihood ?? "—"}
+                                      </span>
+                                    </p>
+                                    <p className="text-[0.52rem] text-slate-500">
+                                      Th: <span className="text-amber-600">{item.adaptiveThreshold ?? "—"}</span>
+                                    </p>
+                                  </div>
+                                </td>
                               )}
-                            </td>
 
-                            {/* Kolom 4: ZUPT & Status */}
-                            <td className="py-2.5 px-3 text-right align-top">
-                              <span className="block text-[0.54rem] text-slate-500 mb-1">
-                                {item.zupt?.includes("Melangkah") || item.zupt?.includes("VALID") ? "● Melangkah" : "○ Diam"}
-                              </span>
-                              <span
-                                className="inline-block px-1.5 py-0.5 rounded text-[0.52rem] font-bold"
-                                style={{
-                                  background: (item.status === "VALID" || item.confidence && parseFloat(String(item.confidence)) >= 80.0)
-                                    ? "#DCFCE7"
-                                    : (item.status === "FAILED" || item.status === "DISCARDED" ? "#FEE2E2" : "#FEF3C7"),
-                                  color: (item.status === "VALID" || item.confidence && parseFloat(String(item.confidence)) >= 80.0)
-                                    ? "#16A34A"
-                                    : (item.status === "FAILED" || item.status === "DISCARDED" ? "#DC2626" : "#D97706"),
-                                }}
-                              >
-                                {isAuth 
-                                  ? ((parseFloat(String(item.confidence ?? item.score ?? 0)) >= 80.0 || item.status === "VALID") ? "LOLOS (≥80%)" : "AKUMULASI (<80%)")
-                                  : "VALID (TEREKAM)"}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                              {/* Kolom 4 (atau Kolom 3 pada Registrasi): Status */}
+                              <td className="py-2.5 px-3 text-right align-top">
+                                <span className="block text-[0.54rem] text-slate-500 mb-1">
+                                  {item.zupt?.includes("Melangkah") || item.zupt?.includes("VALID") ? "● Melangkah" : "○ Diam"}
+                                </span>
+                                {isAuth ? (
+                                  <span
+                                    className="inline-block px-1.5 py-0.5 rounded text-[0.52rem] font-bold"
+                                    style={{
+                                      background: isAbove80 ? "#DCFCE7" : "#FEF3C7",
+                                      color: isAbove80 ? "#16A34A" : "#D97706",
+                                      border: `1px solid ${isAbove80 ? "#BBF7D0" : "#FDE68A"}`,
+                                    }}
+                                  >
+                                    {isAbove80 ? "≥80%" : "<80%"}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="inline-block px-1.5 py-0.5 rounded text-[0.52rem] font-bold"
+                                    style={{
+                                      background: "#DCFCE7",
+                                      color: "#16A34A",
+                                      border: "1px solid #BBF7D0",
+                                    }}
+                                  >
+                                    VALID
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

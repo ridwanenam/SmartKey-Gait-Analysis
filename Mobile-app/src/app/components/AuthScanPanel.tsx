@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Loader2, Activity, Cpu, Layers, Compass, Zap, CheckCircle, AlertTriangle } from "lucide-react";
+import { Loader2, Activity, Cpu, Layers, Zap, CheckCircle, AlertTriangle } from "lucide-react";
 import { LiveSignalGraph } from "./LiveSignalGraph";
 import { BLETelemetry, LiveSample } from "../context/BLEContext";
 
@@ -318,58 +318,6 @@ export function AuthScanPanel({
                   {isScanning && progress > 0 && telemetry?.kurtosis !== undefined ? `${telemetry.kurtosis.toFixed(1)} %g` : "—"}
                 </p>
                 <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.45rem" }}>Ground Reaction</p>
-              </div>
-            </div>
-          </div>
-
-          {/* KELOMPOK 3: ORIENTASI SAKU & ADAPTASI MODEL */}
-          <div className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/70">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Compass size={13} className="text-amber-600" />
-              <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.72rem" }}>
-                3. Orientasi Saku & Adaptasi Model (EMA)
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Orientasi Saku
-                </p>
-                <p style={{ color: "#16A34A", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  100% BEBAS
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Invarian Orientasi Murni
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Pembaruan Inkremental (Δ EMA)
-                </p>
-                <p style={{ color: isScanning && (telemetry?.confidenceScore ?? parseFloat(diagScore)) >= 90.0 ? "#059669" : "#64748B", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning
-                    ? (telemetry?.emaDelta !== undefined ? `${telemetry.emaDelta >= 0 ? "+" : ""}${telemetry.emaDelta.toFixed(3)}` : `Δ ${diagDelta}`)
-                    : "—"}
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Aktif jika CIR ≥ 90% (Margin ≥ 6%)
-                </p>
-              </div>
-
-              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
-                <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.50rem", textTransform: "uppercase" }}>
-                  Status Gerak ZUPT
-                </p>
-                <p style={{ color: isScanning ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "#16A34A" : "#D97706") : "#94A3B8", fontFamily: MONO, fontSize: "0.78rem", fontWeight: 800, marginTop: 1 }}>
-                  {isScanning
-                    ? ((liveSample ? liveSample.isMoving : telemetry?.isZUPTValid) ? "● MELANGKAH" : "○ DIAM / STATIS")
-                    : "—"}
-                </p>
-                <p style={{ color: "#94A3B8", fontFamily: MONO, fontSize: "0.48rem", marginTop: 2 }}>
-                  Rotasi Gyro &gt; 0.85 (rad/s)²
-                </p>
               </div>
             </div>
           </div>
