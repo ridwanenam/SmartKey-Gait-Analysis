@@ -2116,7 +2116,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         <div className="p-3 rounded-lg border border-cyan-200 bg-cyan-50/40 space-y-2">
                           <div className="pb-1.5 border-b border-cyan-100">
                             <span className="text-cyan-800 font-bold text-xs" style={{ fontFamily: MONO }}>
-                              BASE REF: {baseInfo?.name || "Referensi Dasar"}
+                              BASE REF: {currentBase?.name || "Referensi Dasar"}
                             </span>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs" style={{ fontFamily: MONO }}>
@@ -2147,7 +2147,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                         <div className="p-3 rounded-lg border border-orange-200 bg-orange-50/40 space-y-2">
                           <div className="pb-1.5 border-b border-orange-100">
                             <span className="text-orange-800 font-bold text-xs" style={{ fontFamily: MONO }}>
-                              HEAD REF: {headInfo?.name || "Referensi Pembanding"}
+                              HEAD REF: {currentHead?.userId || "Referensi Pembanding"}
                             </span>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs" style={{ fontFamily: MONO }}>

@@ -420,7 +420,7 @@ static bool isSameUserPrefix(const char *nameA, const char *nameB) {
     return false;
 }
 
-// Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User & Adaptasi EMA)
+// Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User GHMM)
 void processAuthenticationState(float ax, float ay, float az, float gx, float gy, float gz) {
     bool windowComplete = featureExtractor.addSample(ax, ay, az, gx, gy, gz);
 

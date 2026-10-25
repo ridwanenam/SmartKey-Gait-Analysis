@@ -8,8 +8,6 @@
 class GHMMClassifier {
 private:
     float alphaForward[NUM_STATES];
-    float peakWindowScores[5];
-    uint8_t peakIndex;
     float currentAdaptiveThreshold;
 
     // Log-sum-exp trick untuk mencegah underflow numerik pada perkalian probabilitas
@@ -58,11 +56,8 @@ private:
     }
 
 public:
-    GHMMClassifier() : peakIndex(0), currentAdaptiveThreshold(BASE_LOG_THRESHOLD) {
+    GHMMClassifier() : currentAdaptiveThreshold(BASE_LOG_THRESHOLD) {
         resetInference();
-        for (uint8_t i = 0; i < 5; ++i) {
-            peakWindowScores[i] = BASE_LOG_THRESHOLD;
-        }
     }
 
     // Reset variabel forward algorithm di awal siklus autentikasi
@@ -70,10 +65,6 @@ public:
         for (uint8_t s = 0; s < NUM_STATES; ++s) {
             alphaForward[s] = -1e9f;
         }
-        for (uint8_t i = 0; i < 5; ++i) {
-            peakWindowScores[i] = BASE_LOG_THRESHOLD;
-        }
-        peakIndex = 0;
         currentAdaptiveThreshold = BASE_LOG_THRESHOLD;
     }
 
@@ -283,33 +274,6 @@ public:
                 return (score < 0.0f) ? 0.0f : score;
             }
         }
-    }
-
-    // Incremental Personalization (Self-Adaptive GHMM) berbasis rumus Exponential Moving Average (EMA)
-    float updateModelEMA(UserModel &model, const float features[NUM_FEATURES]) {
-        float totalDelta = 0.0f;
-        
-        // Memperbarui Mean dan Kovarians pada state yang memiliki bobot aktivasi tertinggi
-        uint8_t bestState = 0;
-        float maxAlpha = alphaForward[0];
-        for (uint8_t s = 1; s < NUM_STATES; ++s) {
-            if (alphaForward[s] > maxAlpha) {
-                maxAlpha = alphaForward[s];
-                bestState = s;
-            }
-        }
-
-        for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-            float oldMean = model.means[bestState][d];
-            // Rumus EMA: mu_baru = alpha * O_t + (1 - alpha) * mu_lama
-            float newMean = (EMA_ALPHA * features[d]) + ((1.0f - EMA_ALPHA) * oldMean);
-            model.means[bestState][d] = newMean;
-
-            // Bekukan kovarians (covars) agar tidak terjadi threshold drift dan batas toleransi tidak melebar tak terkendali
-            totalDelta += fabsf(newMean - oldMean);
-        }
-
-        return totalDelta; // Mengembalikan besaran koreksi untuk log telemetri
     }
 
     float getAdaptiveThreshold() const {
