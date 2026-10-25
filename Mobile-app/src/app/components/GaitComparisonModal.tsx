@@ -79,7 +79,6 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
   // Tab View di dalam Modal: "overview" | "windows" | "oscilloscope"
   const [activeTab, setActiveTab] = useState<"overview" | "windows" | "oscilloscope">("overview");
-  const [selectedWindowIdx, setSelectedWindowIdx] = useState<number>(0); // 0 sampai 4 (Jendela 1 s.d. 5)
 
   // State Osiloskop
   const [plotMode, setPlotMode] = useState<"overlay" | "split">("overlay");
@@ -2093,122 +2092,91 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
             {/* TAB 2: WINDOW-BY-WINDOW INSPECTOR */}
             {activeTab === "windows" && (
-              <div className="space-y-3">
-                {/* 5 Tombol Tab Jendela */}
-                <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                  {[0, 1, 2, 3, 4].map((idx) => {
-                    const isSel = selectedWindowIdx === idx;
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setSelectedWindowIdx(idx)}
-                        className="px-3 py-1.5 rounded-lg border text-xs font-bold transition-all cursor-pointer"
-                        style={{
-                          background: isSel ? "#0F766E" : "#F8FAFC",
-                          color: isSel ? "#FFFFFF" : "#475569",
-                          borderColor: isSel ? "#0F766E" : "#E2E8F0",
-                          fontFamily: MONO,
-                        }}
-                      >
-                        Jendela {idx + 1} (1.5s)
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Perbandingan Jendela Spesifik */}
-                {(() => {
-                  const bStep = baseParsed.steps[selectedWindowIdx];
-                  const hStep = headParsed.steps[selectedWindowIdx];
+              <div className="space-y-3.5">
+                {[0, 1, 2, 3, 4].map((wIdx) => {
+                  const bStep = baseParsed.steps[wIdx];
+                  const hStep = headParsed.steps[wIdx];
 
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {/* Kartu Base Window */}
-                      <div className="p-3.5 rounded-xl border border-cyan-200 bg-cyan-50/40 space-y-2">
-                        <div className="flex items-center justify-between pb-2 border-b border-cyan-100">
-                          <span className="text-cyan-800 font-bold text-xs" style={{ fontFamily: MONO }}>
-                            BASE REF: Jendela {selectedWindowIdx + 1}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[0.55rem] font-bold bg-cyan-100 text-cyan-800" style={{ fontFamily: MONO }}>
-                            Template Sah
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: MONO }}>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.mean ?? "75.0"} °/s</p>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
-                            <p className="font-bold text-cyan-900">{bStep?.variance ?? "1200.0"}</p>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
-                            <p className="font-bold text-cyan-900">{bStep?.stdDev ?? "85.0"} %</p>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
-                            <p className="font-bold text-cyan-900">{bStep?.skewness ?? "65"} smp</p>
-                          </div>
-                          <div className="col-span-2">
-                            <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
-                            <p className="font-bold text-cyan-900">{bStep?.kurtosis ?? "45.0"} %g</p>
-                          </div>
-                        </div>
-                        <div className="pt-2 border-t border-cyan-100 flex items-center justify-between text-[0.58rem]" style={{ fontFamily: MONO }}>
-                          <span className="text-cyan-700 font-semibold">Status ZUPT:</span>
-                          <span className="font-bold text-green-700">{bStep?.zupt ?? "VALID (MELANGKAH)"}</span>
-                        </div>
+                    <div
+                      key={wIdx}
+                      className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/80">
+                        <span className="text-slate-800 font-bold text-xs" style={{ fontFamily: MONO }}>
+                          JENDELA {wIdx + 1} (1.5 Detik)
+                        </span>
+                        <span className="text-[0.55rem] text-slate-500" style={{ fontFamily: MONO }}>
+                          Sampel #{(wIdx * 30) + 1} s.d. #{(wIdx + 1) * 30}
+                        </span>
                       </div>
 
-                      {/* Kartu Head Window */}
-                      <div className="p-3.5 rounded-xl border border-orange-200 bg-orange-50/40 space-y-2">
-                        <div className="flex items-center justify-between pb-2 border-b border-orange-100">
-                          <span className="text-orange-800 font-bold text-xs" style={{ fontFamily: MONO }}>
-                            HEAD REF: Jendela {selectedWindowIdx + 1}
-                          </span>
-                          <span
-                            className="px-2 py-0.5 rounded text-[0.55rem] font-bold"
-                            style={{
-                              background: hStep?.status !== "FAILED" ? "#DCFCE7" : "#FEE2E2",
-                              color: hStep?.status !== "FAILED" ? "#16A34A" : "#DC2626",
-                              fontFamily: MONO,
-                            }}
-                          >
-                            {hStep?.status ?? "VALID"}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs" style={{ fontFamily: MONO }}>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
-                            <p className="font-bold text-orange-900">{hStep?.mean ?? "78.0"} °/s</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Kartu Base Window */}
+                        <div className="p-3 rounded-lg border border-cyan-200 bg-cyan-50/40 space-y-2">
+                          <div className="pb-1.5 border-b border-cyan-100">
+                            <span className="text-cyan-800 font-bold text-xs" style={{ fontFamily: MONO }}>
+                              BASE REF: {baseInfo?.name || "Referensi Dasar"}
+                            </span>
                           </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
-                            <p className="font-bold text-orange-900">{hStep?.variance ?? "1350.0"}</p>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
-                            <p className="font-bold text-orange-900">{hStep?.stdDev ?? "82.0"} %</p>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
-                            <p className="font-bold text-orange-900">{hStep?.skewness ?? "67"} smp</p>
-                          </div>
-                          <div className="col-span-2">
-                            <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
-                            <p className="font-bold text-orange-900">{hStep?.kurtosis ?? "48.0"} %g</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs" style={{ fontFamily: MONO }}>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
+                              <p className="font-bold text-cyan-900">{bStep?.mean ?? "75.0"} °/s</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
+                              <p className="font-bold text-cyan-900">{bStep?.variance ?? "1200.0"}</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
+                              <p className="font-bold text-cyan-900">{bStep?.stdDev ?? "85.0"} %</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
+                              <p className="font-bold text-cyan-900">{bStep?.skewness ?? "65"} smp</p>
+                            </div>
+                            <div className="col-span-2 sm:col-span-2">
+                              <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
+                              <p className="font-bold text-cyan-900">{bStep?.kurtosis ?? "45.0"} %g</p>
+                            </div>
                           </div>
                         </div>
-                        <div className="pt-2 border-t border-orange-100 flex items-center justify-between text-[0.58rem]" style={{ fontFamily: MONO }}>
-                          <span className="text-orange-700 font-semibold">Status ZUPT:</span>
-                          <span className="font-bold text-orange-900">{hStep?.zupt ?? "VALID (MELANGKAH)"}</span>
+
+                        {/* Kartu Head Window */}
+                        <div className="p-3 rounded-lg border border-orange-200 bg-orange-50/40 space-y-2">
+                          <div className="pb-1.5 border-b border-orange-100">
+                            <span className="text-orange-800 font-bold text-xs" style={{ fontFamily: MONO }}>
+                              HEAD REF: {headInfo?.name || "Referensi Pembanding"}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs" style={{ fontFamily: MONO }}>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Rerata Gyro:</span>
+                              <p className="font-bold text-orange-900">{hStep?.mean ?? "78.0"} °/s</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Varians Gyro:</span>
+                              <p className="font-bold text-orange-900">{hStep?.variance ?? "1350.0"}</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Cadence (R):</span>
+                              <p className="font-bold text-orange-900">{hStep?.stdDev ?? "82.0"} %</p>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 text-[0.58rem]">Periode (k):</span>
+                              <p className="font-bold text-orange-900">{hStep?.skewness ?? "67"} smp</p>
+                            </div>
+                            <div className="col-span-2 sm:col-span-2">
+                              <span className="text-slate-500 text-[0.58rem]">Hentakan (Acc):</span>
+                              <p className="font-bold text-orange-900">{hStep?.kurtosis ?? "48.0"} %g</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   );
-                })()}
+                })}
               </div>
             )}
 

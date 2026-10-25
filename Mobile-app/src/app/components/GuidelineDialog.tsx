@@ -35,30 +35,30 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
     bullets: [
       {
         label: "Penempatan Sensor di Saku",
-        text: "Letakkan unit Smart Key di dalam saku celana (depan atau belakang). Pastikan orientasi stabil dan tidak berputar bebas di dalam saku.",
+        text: "Letakkan unit Smart Key di dalam saku celana (depan atau belakang). Karena sistem 100% invarian orientasi, posisi sensor bebas (tegak, miring, maupun terbalik).",
       },
       {
-        label: "Penyelarasan Saku Otomatis (500 ms)",
-        text: "Saat tombol registrasi ditekan, sistem secara otomatis menyelaraskan sudut kemiringan saku celana (Roll & Pitch) dalam 500 ms pertama tanpa perlu menunggu lama.",
-        indicator: "Cukup diam natural selama ~0.5 detik pertama sebelum mulai melangkah.",
+        label: "Kebebasan Orientasi 100% (Tanpa Kalibrasi)",
+        text: "Ekstraksi fitur beroperasi murni pada besaran skalar invarian gravitasi 3D (|acc - 1.0g| dan Euclidean norm gyro). Pengguna tidak perlu menunggu prosedur penyelarasan sudut saku dan bisa langsung melangkah begitu sesi dimulai.",
+        indicator: "Bebas kalibrasi dan tanpa jeda tunggu; sistem langsung siap merekam langkah pertama.",
       },
       {
         label: "Alas Kaki & Permukaan Jalan",
-        text: "Gunakan alas kaki harian standar Anda (sepatu/sandal). Lakukan di permukaan datar tanpa sengaja mengubah kecepatan atau gaya berjalan.",
+        text: "Gunakan alas kaki harian standar Anda (sepatu/sandal). Lakukan di permukaan datar tanpa sengaja mengubah kecepatan atau gaya berjalan alami.",
       },
       {
-        label: "Karakteristik Langkah Nyata",
-        text: "Berjalanlah secara santai dan konstan (1-2 langkah/detik). Sistem menggunakan penapis ZUPT untuk memastikan hanya langkah kaki murni yang diproses.",
+        label: "Karakteristik Langkah Nyata & Penapis ZUPT",
+        text: "Berjalanlah secara santai dan konstan (1-2 langkah/detik). Sistem menggunakan penapis ZUPT (energi rotasi gyro > 0.85 (rad/s)²) dan batas hentakan tumit nyata (Ground Reaction Force) untuk memastikan hanya langkah kaki murni yang diproses.",
       },
       {
         label: "Target Kuota 5 Jendela Valid",
-        text: "Sistem mengumpulkan 5 jendela data valid (masing-masing 1.5 detik @ 100 Hz IMU). Selesaikan rangkaian jalan hingga progres mencapai kuota 5/5 (~7.5 detik total).",
-        indicator: "Jendela yang dideteksi diam/noise otomatis diabaikan tanpa membatalkan langkah valid yang sudah terkumpul.",
+        text: "Sistem mengumpulkan 5 jendela data valid (masing-masing 1.5 detik @ 100 Hz IMU). Selesaikan rangkaian jalan hingga progres mencapai kuota 5/5 (~7.5 detik total langkah aktif).",
+        indicator: "Jendela yang dideteksi diam atau noise otomatis diabaikan tanpa membatalkan langkah valid yang sudah terkumpul.",
       },
       {
-        label: "Penyimpanan Permanen ke Flash",
-        text: "Setelah 5 jendela valid terpenuhi, model GHMM awal (distribusi Gaussian 5 state & 5 fitur) langsung dilatih dan disimpan permanen ke Flash KVStore internal RP2040.",
-        indicator: "Data model tetap tersimpan aman di chip wearable meskipun daya baterai dimatikan.",
+        label: "Penyimpanan Permanen ke Flash (Slot 1 s.d. 6)",
+        text: "Setelah 5 jendela valid terpenuhi, model GHMM (5-State Left-to-Right dengan 5 dimensi ciri invarian) langsung dilatih di edge microcontroller dan disimpan permanen ke Flash internal RP2040 (mendukung hingga 6 slot profil pemilik).",
+        indicator: "Data model tersimpan permanen di chip wearable meskipun daya baterai dimatikan.",
       },
     ],
   },
@@ -72,33 +72,34 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
     bullets: [
       {
         label: "Pemrosesan Sambil Berjalan (On-the-Move)",
-        text: "Pengguna cukup berjalan mendekati rumah. Smart Key di saku celana menyaring sinyal akselerasi-gyro dan mengumpulkan skor kecocokan forward GHMM.",
+        text: "Pengguna cukup melangkah mendekati pintu. Smart Key di saku celana menyaring sinyal akselerasi-gyro dan menghitung probabilitas kecocokan forward GHMM secara real-time.",
       },
       {
-        label: "Penyelarasan Saku Instan (500 ms)",
-        text: "Begitu sesi dimulai, sensor otomatis mengunci sudut kemiringan gravitasi saku secara instan (500 ms) sebelum mengevaluasi langkah.",
+        label: "Tanpa Kalibrasi Saku (100% Invarian Orientasi)",
+        text: "Sensor langsung mengevaluasi ayunan langkah kaki tanpa perlu berhenti atau menunggu kalibrasi gravitasi, sehingga deteksi berjalan mulus dan instan.",
       },
       {
-        label: "Ambang Batas Dinamis (Adaptive Threshold)",
-        text: "Ambang batas toleransi disesuaikan otomatis mengikuti amplitudo langkah terakhir pengguna guna mengantisipasi kelelahan fisik atau variasi ritme harian.",
-        indicator: "Nilai ambang bergeser mengikuti fluktuasi puncak energi langkah terakhir.",
+        label: "Evaluasi Log-Likelihood & Guardrail Kinematika",
+        text: "Setiap jendela langkah dihitung probabilitas kecocokannya terhadap model GHMM 5-state. Sinyal non-gait seperti ayunan tangan atau saku jaket otomatis ditolak oleh penapis hentakan tanah (Ground Reaction Force > 30%g).",
+        indicator: "Mencegah bypass dari gerakan manipulatif atau getaran pasif di luar langkah kaki asli.",
       },
       {
-        label: "Evaluasi Multiclass 1-vs-All",
-        text: "Sistem mencocokkan pola langkah secara bersamaan terhadap seluruh slot pemilik yang terdaftar dan memilih profil dengan probabilitas tertinggi.",
+        label: "Evaluasi Multiclass 1-vs-All & Margin Pembeda",
+        text: "Sistem mencocokkan pola langkah secara bersamaan terhadap seluruh slot pemilik (Slot 1 s.d. 6) yang terdaftar di flash RP2040 dan memilih profil dengan probabilitas tertinggi.",
+        indicator: "Jika kandidat terbaik berbeda nama/prefix dari slot lain, sistem memvalidasi keunggulan margin pemisah untuk mencegah false accept.",
       },
       {
         label: "Eksekusi Kunci Pintu Otomatis",
-        text: "Saat akumulasi 5 jendela mencapai skor CIR ≥ 80.0%, perintah buka pintu langsung dikirim via BLE ke ESP32 dan relay solenoid aktif seketika.",
+        text: "Saat akumulasi 5 jendela mencapai skor CIR ≥ 80.0%, perintah buka pintu langsung dikirim via BLE ke ESP32 dan relay solenoid aktif seketika (< 1 detik).",
         indicator: "Pintu terbuka otomatis tanpa perlu mengeluarkan HP atau menempelkan kartu.",
       },
       {
-        label: "Personalisasi Inkremental (Self-Adaptive EMA)",
-        text: "Verifikasi yang memiliki keyakinan sangat tinggi (CIR ≥ 90.0%) memperbarui model biometrik di Flash memori via formula Exponential Moving Average (α = 0.15).",
+        label: "Integritas Template Flash Stabil (Tanpa Template Poisoning)",
+        text: "Model biometrik di flash memori RP2040 bersifat stabil dan deterministik sesuai template registrasi resmi, menjaga keandalan pengenalan tanpa degradasi parameter akibat perubahan ritme sesaat.",
       },
       {
         label: "Emergency Bypass (Cadangan Darurat)",
-        text: "Jika pengguna cedera kaki berat atau sensor terkendala, buka menu Bypass di aplikasi dan masukkan 6 digit PIN darurat untuk membuka pintu (< 1 detik).",
+        text: "Jika pengguna mengalami cedera kaki berat atau sensor terkendala, buka menu Bypass di aplikasi dan masukkan 6 digit PIN darurat untuk membuka pintu (< 1 detik).",
       },
     ],
   },
@@ -113,17 +114,17 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
       {
         label: "1. Skor Keyakinan (CIR - Confidence Indicator Ratio)",
         text: "Mengukur tingkat kemiripan relatif pola ayunan langkah terhadap profil biometrik pemilik via evaluasi Multiclass 1-vs-All GHMM. Berfungsi sebagai penentu utama apakah pintu berhak dibuka atau ditolak.",
-        indicator: "Skala 0.0% s.d. 100.0%. Semakin mendekati 100% semakin cocok/identik. Pintu dibuka jika CIR ≥ 80.0%. Adaptasi model (EMA) aktif jika CIR ≥ 90.0%.",
+        indicator: "Skala 0.0% s.d. 100.0%. Semakin mendekati 100% semakin cocok/identik. Pintu dibuka jika CIR ≥ 80.0%. Menggunakan pemetaan probabilitas kontinu terhadap seluruh slot pemilik terdaftar.",
       },
       {
         label: "2. Log-Likelihood (LL - ln αT / t Length-Normalized)",
-        text: "Rata-rata probabilitas logaritmik rantai transisi dan emisi Gaussian forward pass per langkah sepanjang 2 state tersembunyi (Dual-Phase: Fase Tumpuan / Stance vs Fase Ayunan / Swing). Menunjukkan seberapa wajar urutan fase langkah terhadap model secara adil dan stabil.",
-        indicator: "Nilai negatif skala logaritma natural (ln) per jendela. Semakin mendekati 0 (semakin tidak negatif), semakin tinggi kecocokannya. Contoh: -15.5 jauh lebih cocok dibanding -35.0. Nilai di bawah basis ambang dinamis diidentifikasi sebagai langkah asing/anomali.",
+        text: "Rata-rata probabilitas logaritmik rantai transisi dan emisi Gaussian forward pass per langkah sepanjang 5 state tersembunyi (GHMM 5-State Left-to-Right). Menunjukkan seberapa wajar urutan fase langkah terhadap model secara adil dan stabil.",
+        indicator: "Nilai negatif skala logaritma natural (ln) per jendela. Semakin mendekati 0 (semakin tidak negatif), semakin tinggi kecocokannya. Contoh: -15.5 jauh lebih cocok dibanding -35.0. Nilai di bawah ambang batas model diidentifikasi sebagai langkah asing/anomali.",
       },
       {
-        label: "3. Ambang Batas Dinamis (Adaptive Threshold - Th)",
-        text: "Ambang toleransi dinamis berbasis Peak Tracking (margin 1.15x) yang bergerak adaptif mengikuti intensitas langkah pengguna untuk mengantisipasi kelelahan otot atau perubahan ritme jalan harian.",
-        indicator: "Bergerak dinamis mengikuti energi puncak langkah terakhir. Nilai Log-Likelihood langkah harus berada di atas ambang ini (LL ≥ Th) agar diakui sebagai langkah pemilik yang valid.",
+        label: "3. Ambang Batas Model (Baseline Threshold - Th)",
+        text: "Batas toleransi probabilitas log-likelihood yang ditetapkan berdasarkan profil registrasi pemilik. Nilai Log-Likelihood langkah harus berada di atas ambang batas ini agar diakui sebagai langkah pemilik yang valid.",
+        indicator: "Berfungsi sebagai guardrail statistik untuk menyaring langkah asing atau orang lain sebelum pemetaan skor keyakinan akhir.",
       },
       {
         label: "4. Vektor Ciri: Rata-Rata Kecepatan Sudut (Mean Gyro - μ)",
@@ -143,12 +144,12 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
       {
         label: "7. Vektor Ciri: Periode Siklus Langkah (Stride Period - k)",
         text: "Indeks lag waktu autokorelasi (k_peak) dari siklus langkah kaki penuh. Mewakili frekuensi langkah alami yang berkorelasi langsung dengan panjang tungkai dan tinggi badan individu (biometrik fisik bawaan unik).",
-        indicator: "Rentang tipikal 45 s.d. 95 sampel @ 10ms (setara 0.45s s.d. 0.95s per langkah). Menggantikan skewness yang rentan derau kalkulasi.",
+        indicator: "Rentang tipikal 45 s.d. 95 sampel @ 10ms (setara 0.45s s.d. 0.95s per langkah).",
       },
       {
         label: "8. Vektor Ciri: Hentakan Kaki Dinamis (Heel-Strike Impact - Acc)",
         text: "RMS akselerasi linier dinamis |acc - 1.0g| yang mengukur besaran gaya reaksi tanah (Ground Reaction Force) saat tumit menapak permukaan lantai yang merambat ke paha. Menjadi pembeda mutlak antara langkah kaki nyata vs guncangan saku jaket atau ayunan tangan.",
-        indicator: "Rentang tipikal 35 %g s.d. 85 %g saat melangkah di saku celana. Pada ayunan tangan atau saku jaket tanpa hentakan tanah, nilainya < 15 %g sehingga langsung ditolak oleh model.",
+        indicator: "Rentang tipikal 35 %g s.d. 85 %g saat melangkah di saku celana. Pada ayunan tangan atau saku jaket tanpa hentakan tanah, nilainya < 20 %g sehingga langsung ditolak oleh model.",
       },
       {
         label: "9. ZUPT (Zero Velocity Update - Filter Gerak Aktif)",
@@ -156,9 +157,9 @@ const CONTENT: Record<"registration" | "authentication" | "metrics", TabContent>
         indicator: "Ambang batas energi rotasi = 0.85 (rad/s)². Jika energi rotasi ≥ 0.85, status dinyatakan VALID (Melangkah) dan diteruskan ke GHMM; jika < 0.85, status DIAM dan jendela dibuang agar tidak merusak akurasi model.",
       },
       {
-        label: "10. Personalisasi Inkremental (Δ EMA)",
-        text: "Besaran koreksi pembaruan halus pada nilai rata-rata (means) model biometrik di flash memori via formula Exponential Moving Average (faktor pembobot α = 0.10). Matriks kovarian dibekukan saat adaptasi agar ambang batas (threshold) tidak hanyut (drift).",
-        indicator: "Rentang koreksi tipikal ±0.001 s.d. ±0.025. Hanya aktif saat verifikasi sangat yakin (CIR ≥ 90.0%) DAN memiliki margin keunggulan bersih (Separation Margin ≥ 3.0%) terhadap slot pengguna lain untuk mencegah template poisoning.",
+        label: "10. Margin Pemisahan Multiclass (Separation Margin)",
+        text: "Selisih keunggulan probabilitas kandidat terbaik terhadap runner-up (slot pengguna lain yang terdaftar). Memastikan akses pintu hanya dibuka jika pengguna yang melangkah dapat dibedakan secara tegas dari profil pengguna lain.",
+        indicator: "Mencegah kesalahan klasifikasi (false accept) antar-penghuni yang memiliki ciri langkah mirip.",
       },
       {
         label: "11. Kebebasan Orientasi Saku (100% Invarian Orientasi)",

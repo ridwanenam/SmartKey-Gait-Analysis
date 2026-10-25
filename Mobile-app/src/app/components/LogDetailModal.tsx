@@ -1275,7 +1275,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                           <th className="py-2.5 px-3 w-20">Jendela</th>
                           <th className="py-2.5 px-3">Vektor Ciri 5D (Feature Extraction)</th>
                           {isAuth && <th className="py-2.5 px-3">Evaluasi GHMM & Ambang</th>}
-                          <th className="py-2.5 px-3 text-right">{isAuth ? "Status Ambang" : "Status Langkah"}</th>
+                          {isAuth && <th className="py-2.5 px-3 text-right">Status Ambang</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1293,16 +1293,30 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                                 </span>
                               </td>
 
-                              {/* Kolom 2: Vektor Ciri 5D Rapi */}
+                              {/* Kolom 2: Vektor Ciri 5D */}
                               <td className="py-2.5 px-3 text-slate-700 align-top">
-                                <div className="space-y-0.5">
-                                  <p className="font-semibold text-slate-800">
-                                    μ: <span className="text-emerald-700">{item.mean ?? "—"}°/s</span> · σ²: <span>{item.variance ?? "—"}</span> · R: <span>{item.stdDev ?? "—"}%</span>
-                                  </p>
-                                  <p className="text-[0.55rem] text-slate-500">
-                                    Periode (k): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"} smp</span> · Hentakan: <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"} %g</span>
-                                  </p>
-                                </div>
+                                {!isAuth ? (
+                                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-slate-700 py-0.5">
+                                    <span>μ: <strong className="text-emerald-700 font-semibold">{item.mean ?? "—"}°/s</strong></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>σ²: <strong className="font-semibold">{item.variance ?? "—"}</strong></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>R: <strong className="font-semibold">{item.stdDev ?? "—"}%</strong></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>Periode (k): <strong className="text-cyan-700 font-semibold">{item.skewness ?? "—"} smp</strong></span>
+                                    <span className="text-slate-300">·</span>
+                                    <span>Hentakan: <strong className="text-purple-700 font-semibold">{item.kurtosis ?? "—"} %g</strong></span>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    <p className="font-semibold text-slate-800">
+                                      μ: <span className="text-emerald-700">{item.mean ?? "—"}°/s</span> · σ²: <span>{item.variance ?? "—"}</span> · R: <span>{item.stdDev ?? "—"}%</span>
+                                    </p>
+                                    <p className="text-[0.55rem] text-slate-500">
+                                      Periode (k): <span className="text-cyan-700 font-medium">{item.skewness ?? "—"} smp</span> · Hentakan: <span className="text-purple-700 font-medium">{item.kurtosis ?? "—"} %g</span>
+                                    </p>
+                                  </div>
+                                )}
                               </td>
 
                               {/* Kolom 3: GHMM (Hanya ditampilkan pada Auth) */}
@@ -1327,12 +1341,12 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                                 </td>
                               )}
 
-                              {/* Kolom 4 (atau Kolom 3 pada Registrasi): Status */}
-                              <td className="py-2.5 px-3 text-right align-top">
-                                <span className="block text-[0.54rem] text-slate-500 mb-1">
-                                  {item.zupt?.includes("Melangkah") || item.zupt?.includes("VALID") ? "● Melangkah" : "○ Diam"}
-                                </span>
-                                {isAuth ? (
+                              {/* Kolom 4 (Hanya ditampilkan pada Auth): Status Ambang */}
+                              {isAuth && (
+                                <td className="py-2.5 px-3 text-right align-top">
+                                  <span className="block text-[0.54rem] text-slate-500 mb-1">
+                                    {item.zupt?.includes("Melangkah") || item.zupt?.includes("VALID") ? "● Melangkah" : "○ Diam"}
+                                  </span>
                                   <span
                                     className="inline-block px-1.5 py-0.5 rounded text-[0.52rem] font-bold"
                                     style={{
@@ -1343,19 +1357,8 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                                   >
                                     {isAbove80 ? "≥80%" : "<80%"}
                                   </span>
-                                ) : (
-                                  <span
-                                    className="inline-block px-1.5 py-0.5 rounded text-[0.52rem] font-bold"
-                                    style={{
-                                      background: "#DCFCE7",
-                                      color: "#16A34A",
-                                      border: "1px solid #BBF7D0",
-                                    }}
-                                  >
-                                    VALID
-                                  </span>
-                                )}
-                              </td>
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
