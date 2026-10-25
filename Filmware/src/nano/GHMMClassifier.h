@@ -25,12 +25,12 @@ private:
 
     // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
     static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean Gyro (~50-100 deg/s) -> var floor 25.0f (std ~5.0 deg/s)
-        // Feature 1: StdDev Gyro (~20-45 deg/s) -> var floor 25.0f (std ~5.0 deg/s)
+        // Feature 0: Mean Gyro (~40-90 deg/s) -> var floor 49.0f (std ~7.0 deg/s toleransi tempo langkah)
+        // Feature 1: StdDev Gyro (~20-50 deg/s) -> var floor 36.0f (std ~6.0 deg/s)
         // Feature 2: Cadence Regularity (~60-90%) -> var floor 36.0f (std ~6.0%)
-        // Feature 3: Step Period (~45-70 smp) -> var floor 25.0f (std ~5.0 smp = 50ms toleransi)
-        // Feature 4: Heel-Strike Impact (~30-70 %g) -> var floor 25.0f (std ~5.0 %g)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 25.0f, 25.0f, 36.0f, 25.0f, 25.0f };
+        // Feature 3: Step Period (~40-75 smp) -> var floor 36.0f (std ~6.0 smp = 60ms toleransi ritme)
+        // Feature 4: Heel-Strike Impact (~15-40 %g) -> var floor 25.0f (std ~5.0 %g)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 49.0f, 36.0f, 36.0f, 36.0f, 25.0f };
         return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
     }
 
@@ -238,9 +238,9 @@ public:
         float baseLL = (model.baselineLogProb <= -5.0f && model.baselineLogProb >= -60.0f) 
                        ? model.baselineLogProb : BASE_LOG_THRESHOLD;
         
-        // Ambang batas lolos (80.0% CIR) dipatok pada (baseLL - 3.5 log-unit)
-        // Langkah normal pengguna sah memiliki log-prob dalam rentang (baseLL +/- 2.5 log-unit)
-        currentAdaptiveThreshold = baseLL - 3.5f;
+        // Ambang batas lolos (80.0% CIR) dipatok pada (baseLL - 5.5 log-unit)
+        // Memberikan toleransi variasi alami langkah kaki manusia (90% interval kepercayaan chi-square 5D)
+        currentAdaptiveThreshold = baseLL - 5.5f;
 
         return normalizedLogProb;
     }
@@ -252,31 +252,34 @@ public:
         
         float baselineTh = (currentAdaptiveThreshold > -5.0f) ? BASE_LOG_THRESHOLD : currentAdaptiveThreshold;
 
-        // Titik ambang kelulusan: baselineTh (skor 80.0%)
-        // Titik baseline golden registrasi: baseLL = baselineTh + 3.5f (skor 91.0%)
-        // Di atas baselineTh, skor bertumbuh secara proporsional halus hingga 99.5% tanpa ceiling kaku
-        // Di bawah baselineTh, skor turun tajam menuju 0.0%
+        // Rentang dari Ambang Kelulusan (80.0%) menuju Golden Baseline Registrasi (92.0%): 5.5 log-unit
+        const float SPAN_TO_BASE = 5.5f;
+
         if (normLogProb >= baselineTh) {
             float delta = normLogProb - baselineTh;
-            if (delta <= 3.5f) {
-                // Rentang dari Ambang Batas (80.0%) menuju Golden Baseline Registrasi (91.0%)
-                return 80.0f + (delta / 3.5f) * 11.0f;
+            if (delta <= SPAN_TO_BASE) {
+                // Rentang dari Ambang Batas (80.0%) menuju Golden Baseline Registrasi (92.0%)
+                return 80.0f + (delta / SPAN_TO_BASE) * 12.0f;
             } else {
                 // Melampaui Golden Baseline (lebih konsisten dari saat registrasi):
-                // Bertumbuh asimtotik dari 91.0% menuju 99.5% tanpa terhambat ceiling kaku
-                float excess = delta - 3.5f;
-                float score = 91.0f + 8.8f * (1.0f - expf(-0.35f * excess));
+                // Bertumbuh asimtotik dari 92.0% menuju 99.5% tanpa terhambat ceiling kaku
+                float excess = delta - SPAN_TO_BASE;
+                float score = 92.0f + 7.8f * (1.0f - expf(-0.35f * excess));
                 return (score > 100.0f) ? 100.0f : score;
             }
         } else {
             float drop = baselineTh - normLogProb;
-            if (drop <= 10.0f) {
-                // Penurunan linear tajam: 10 log-unit di bawah threshold jatuh ke 20.0%
-                return 80.0f - (drop / 10.0f) * 60.0f;
+            if (drop <= 4.0f) {
+                // Penurunan bertahap halus untuk deviasi minor: 80.0% turun ke 60.0%
+                return 80.0f - (drop / 4.0f) * 20.0f;
+            } else if (drop <= 10.0f) {
+                // Penurunan tegas untuk deviasi moderat/profil lain: 60.0% turun ke 20.0%
+                float excessDrop = drop - 4.0f;
+                return 60.0f - (excessDrop / 6.0f) * 40.0f;
             } else {
-                // Penurunan lanjut dari 20.0% menuju 0.0% (non-gait/anomali berat)
+                // Penurunan lanjut menuju 0.0% (anomali berat / non-gait)
                 float excessDrop = drop - 10.0f;
-                float score = 20.0f - (excessDrop / 10.0f) * 20.0f;
+                float score = 20.0f - (excessDrop / 6.0f) * 20.0f;
                 return (score < 0.0f) ? 0.0f : score;
             }
         }
