@@ -54,7 +54,7 @@ enum SystemState {
 // ==========================================
 struct UserModel {
     bool isRegistered;
-    char userName[16];
+    char userName[32];
     float startProb[NUM_STATES];
     float transMat[NUM_STATES][NUM_STATES];
     float means[NUM_STATES][NUM_FEATURES];

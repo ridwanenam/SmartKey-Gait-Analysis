@@ -16,7 +16,7 @@ BLEHandler       ble;
 SystemState currentState = STATE_IDLE;
 UserModel activeUsers[MAX_USERS];
 uint8_t currentSlotTarget = 0;
-char targetUserName[16] = "User_1";
+char targetUserName[32] = "User_1";
 uint8_t validWindowCounter = 0;
 float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 
@@ -162,7 +162,7 @@ void reloadUsersFromFlash() {
 
 // Menangani string instruksi masuk dari Mobile App via BLE
 void handleIncomingCommands() {
-    char cmd[32];
+    char cmd[64];
     if (ble.hasNewCommand(cmd, sizeof(cmd))) {
         Serial.print(F("[BLE CMD] Diterima: "));
         Serial.println(cmd);
@@ -243,7 +243,7 @@ void handleIncomingCommands() {
             // Kirim seluruh slot (0 sampai MAX_USERS-1) yang relevan dengan UI Mobile App
             // Berikan jeda 80ms antar paket agar BLE connection interval Nina W102 (45-75ms) tidak menumpuk/menimpa notifikasi
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                char slotMsg[48];
+                char slotMsg[64];
                 if (activeUsers[i].isRegistered) {
                     snprintf(slotMsg, sizeof(slotMsg), "FLASH_SLOT:%d:1:%s", i, activeUsers[i].userName);
                 } else {
@@ -275,7 +275,7 @@ void handleIncomingCommands() {
                     memset(&activeUsers[slotToDelete], 0, sizeof(UserModel));
                     ghmm[slotToDelete].resetInference();
                     StorageManager::deleteUser(slotToDelete);
-                    reloadUsersFromFlash();
+                    activeUsers[slotToDelete].isRegistered = false;
                     char delMsg[32];
                     snprintf(delMsg, sizeof(delMsg), "DEL_SUCCESS:%d", slotToDelete);
                     ble.sendDoorCommand(delMsg);
@@ -296,10 +296,12 @@ void handleIncomingCommands() {
                     strncpy(activeUsers[slotToRename].userName, newName, sizeof(activeUsers[slotToRename].userName) - 1);
                     activeUsers[slotToRename].userName[sizeof(activeUsers[slotToRename].userName) - 1] = '\0';
                     if (activeUsers[slotToRename].isRegistered) {
-                        StorageManager::saveUser(slotToRename, activeUsers[slotToRename]);
-                        reloadUsersFromFlash();
+                        bool saveOk = StorageManager::saveUser(slotToRename, activeUsers[slotToRename]);
+                        if (!saveOk) {
+                            Serial.println(F("[STORAGE ERROR] Gagal menyimpan nama baru ke Flash!"));
+                        }
                     }
-                    char renameMsg[48];
+                    char renameMsg[64];
                     snprintf(renameMsg, sizeof(renameMsg), "RENAME_SUCCESS:%d:%s", slotToRename, activeUsers[slotToRename].userName);
                     ble.sendDoorCommand(renameMsg);
                     Serial.print(F("[STORAGE] Nama Slot "));
@@ -367,19 +369,25 @@ void processTrainingState(float ax, float ay, float az, float gx, float gy, floa
                 ghmm[currentSlotTarget].trainInitialModel(activeUsers[currentSlotTarget], trainingFeaturesBuffer, targetUserName);
                 bool saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
                 if (!saveOk) {
-                    Serial.print(F("[STORAGE ERROR] Gagal menulis ke Flash! Mengulang kv_remove & kv_set... "));
-                    StorageManager::deleteUser(currentSlotTarget);
+                    Serial.println(F("[STORAGE ERROR] Gagal menulis ke Flash! Mengulang saveUser..."));
                     saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
-                    Serial.println(saveOk ? F("SUKSES") : F("GAGAL"));
+                    Serial.println(saveOk ? F("[STORAGE] Retry SUKSES") : F("[STORAGE] Retry GAGAL"));
                 }
 
-                Serial.print(F("[SUCCESS] Model GHMM "));
-                Serial.print(targetUserName);
-                Serial.println(F(" Selesai & Tersimpan di Flash!"));
+                if (saveOk) {
+                    Serial.print(F("[SUCCESS] Model GHMM "));
+                    Serial.print(targetUserName);
+                    Serial.println(F(" Selesai & Tersimpan di Flash!"));
 
-                char trainSuccessMsg[32];
-                snprintf(trainSuccessMsg, sizeof(trainSuccessMsg), "TRAIN_SUCCESS:%d:%s", currentSlotTarget, activeUsers[currentSlotTarget].userName);
-                ble.sendDoorCommand(trainSuccessMsg);
+                    char trainSuccessMsg[64];
+                    snprintf(trainSuccessMsg, sizeof(trainSuccessMsg), "TRAIN_SUCCESS:%d:%s", currentSlotTarget, activeUsers[currentSlotTarget].userName);
+                    ble.sendDoorCommand(trainSuccessMsg);
+                } else {
+                    Serial.println(F("[ERR] Gagal menyimpan model ke Flash! Membatalkan slot."));
+                    activeUsers[currentSlotTarget].isRegistered = false;
+                    ghmm[currentSlotTarget].resetInference();
+                    ble.sendDoorCommand("TRAIN_FAILED:STORAGE_ERROR");
+                }
                 currentState = STATE_IDLE;
             } else {
                 ble.sendTelemetry(telem);
@@ -691,7 +699,7 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     }
                     Serial.println(F("%)"));
 
-                    char doorMsg[32];
+                    char doorMsg[64];
                     snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
                     ble.sendDoorCommand(doorMsg);
                 } else if (!isKinematicallyValid) {
