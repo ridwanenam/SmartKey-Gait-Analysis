@@ -425,6 +425,9 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         addLog({ type: "reg", status: "Success", message: `Pendaftaran Model (${trainedName}) Selesai di Edge RP2040` });
         databaseService.saveUserProfile(trainedSlot, trainedName).catch(console.error);
         setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
+      } else if (text.startsWith("TRAIN_FAILED")) {
+        setBleData(prev => ({ ...prev, authStatus: "failed" }));
+        addLog({ type: "reg", status: "Failed", message: "Pendaftaran Gagal: Memori Flash RP2040 penuh atau gagal menyimpan profil" });
       } else if (text.startsWith("DEL_SUCCESS")) {
         const parts = text.split(":");
         const slot = parts.length > 1 ? parseInt(parts[1], 10) : 0;
@@ -441,10 +444,12 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         const parts = text.split(":");
         const slot = parts.length > 1 ? parseInt(parts[1], 10) : 0;
         const name = parts.length > 2 ? parts[2] : `User_${slot + 1}`;
-        addLog({ type: "system", status: "Success", message: `Slot ${slot + 1} di Flash RP2040 Diubah Menjadi "${name}"` });
-        databaseService.saveUserProfile(slot, name).catch(console.error);
-        databaseService.updateRegLogSlotName(slot, name).catch(console.error);
-        setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
+        if (name && name.trim()) {
+          addLog({ type: "system", status: "Success", message: `Slot ${slot + 1} di Flash RP2040 Diubah Menjadi "${name}"` });
+          databaseService.saveUserProfile(slot, name).catch(console.error);
+          databaseService.updateRegLogSlotName(slot, name).catch(console.error);
+          setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
+        }
       } else if (text.startsWith("FLASH_SLOT:")) {
         const parts = text.split(":");
         const slotIdx = parseInt(parts[1], 10);
