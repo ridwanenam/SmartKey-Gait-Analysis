@@ -147,13 +147,9 @@ void loop() {
 
 // Memuat ulang profil terdaftar dari Flash ke RAM
 void reloadUsersFromFlash() {
+    StorageManager::loadAll(activeUsers);
     for (uint8_t i = 0; i < MAX_USERS; ++i) {
-        UserModel loadedModel;
-        bool ok = StorageManager::loadUser(i, loadedModel);
-        if (ok && loadedModel.isRegistered) {
-            activeUsers[i] = loadedModel;
-        } else {
-            activeUsers[i].isRegistered = false;
+        if (!activeUsers[i].isRegistered) {
             memset(&activeUsers[i], 0, sizeof(UserModel));
             ghmm[i].resetInference();
         }
@@ -274,8 +270,7 @@ void handleIncomingCommands() {
                     activeUsers[slotToDelete].isRegistered = false;
                     memset(&activeUsers[slotToDelete], 0, sizeof(UserModel));
                     ghmm[slotToDelete].resetInference();
-                    StorageManager::deleteUser(slotToDelete);
-                    activeUsers[slotToDelete].isRegistered = false;
+                    StorageManager::saveAll(activeUsers);
                     char delMsg[32];
                     snprintf(delMsg, sizeof(delMsg), "DEL_SUCCESS:%d", slotToDelete);
                     ble.sendDoorCommand(delMsg);
@@ -296,7 +291,7 @@ void handleIncomingCommands() {
                     strncpy(activeUsers[slotToRename].userName, newName, sizeof(activeUsers[slotToRename].userName) - 1);
                     activeUsers[slotToRename].userName[sizeof(activeUsers[slotToRename].userName) - 1] = '\0';
                     if (activeUsers[slotToRename].isRegistered) {
-                        bool saveOk = StorageManager::saveUser(slotToRename, activeUsers[slotToRename]);
+                        bool saveOk = StorageManager::saveAll(activeUsers);
                         if (!saveOk) {
                             Serial.println(F("[STORAGE ERROR] Gagal menyimpan nama baru ke Flash!"));
                         }
@@ -367,10 +362,10 @@ void processTrainingState(float ax, float ay, float az, float gx, float gy, floa
 
                 // Eksekusi Komputasi Awal Model GHMM untuk target user
                 ghmm[currentSlotTarget].trainInitialModel(activeUsers[currentSlotTarget], trainingFeaturesBuffer, targetUserName);
-                bool saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
+                bool saveOk = StorageManager::saveAll(activeUsers);
                 if (!saveOk) {
-                    Serial.println(F("[STORAGE ERROR] Gagal menulis ke Flash! Mengulang saveUser..."));
-                    saveOk = StorageManager::saveUser(currentSlotTarget, activeUsers[currentSlotTarget]);
+                    Serial.println(F("[STORAGE ERROR] Gagal menulis ke Flash! Mengulang saveAll..."));
+                    saveOk = StorageManager::saveAll(activeUsers);
                     Serial.println(saveOk ? F("[STORAGE] Retry SUKSES") : F("[STORAGE] Retry GAGAL"));
                 }
 
