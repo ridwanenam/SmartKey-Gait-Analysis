@@ -7,20 +7,19 @@
 // ==============================================================================
 // 1. KONFIGURASI PERANGKAT KERAS & PIN (DIAGRAM ESP32 -> RELAY -> SOLENOID)
 // ==============================================================================
-// Sesuai diagram pengkabelan:
-// - ESP32 Pin 27 (GPIO16) -> Pin IN pada Modul Relay
-// - Vin 5V                -> VCC Modul Relay
-// - GND                   -> GND Modul Relay
-// - Relay COM & NO        -> Mengontrol Arus DC 12V untuk Solenoid Door Lock
+// Sesuai diagram pengkabelan & verifikasi hardware:
+// - ESP32 Pin D15 (GPIO15) -> Pin IN pada Modul Relay
+// - Vin 5V                 -> VCC Modul Relay
+// - GND                    -> GND Modul Relay
+// - Relay COM & NO         -> Mengontrol Arus DC 12V untuk Solenoid Door Lock
 // ==============================================================================
-constexpr uint8_t RELAY_PIN         = 16;   // GPIO16 terhubung ke pin IN Relay
+constexpr uint8_t RELAY_PIN         = 15;   // GPIO15 (D15) terhubung ke pin IN Relay
 constexpr uint8_t LED_INDICATOR     = 2;    // Built-in LED ESP32 (indikator visual status pintu)
 
 // Level logika trigger relay:
-// Standar modul relay 5V Arduino/ESP (seperti SRD-05VDC-SL-C) umumnya bertipe Active-LOW.
-// Ubah ke HIGH jika modul relay Anda diset jumper-nya ke High-Level Trigger.
-#define RELAY_ACTIVE_LEVEL          LOW
-#define RELAY_INACTIVE_LEVEL        ((RELAY_ACTIVE_LEVEL == LOW) ? HIGH : LOW)
+// Berdasarkan pengujian hardware pada ref.cpp: HIGH mengaktifkan relay/solenoid terbuka, LOW mengunci
+#define RELAY_ACTIVE_LEVEL          HIGH
+#define RELAY_INACTIVE_LEVEL        LOW
 
 // Proteksi Solenoid:
 // Solenoid 12V DC tidak boleh terus menerus dialiri listrik agar kumparannya tidak overheating/terbakar.

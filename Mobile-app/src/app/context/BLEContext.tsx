@@ -2,11 +2,11 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { BleClient, dataViewToText, textToDataView } from "@capacitor-community/bluetooth-le";
 import { databaseService, formatLogTimestamp } from "../services/databaseService";
 
-// UUID BLE selaras dengan firmware RP2040 (Filmware/src/nano/config.h)
+// UUID BLE selaras dengan firmware RP2040 & ESP32
 const SMART_KEY_SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
-const DATA_CHARACTERISTIC_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"; // TX Telemetri dari RP2040 (Notifications)
 const COMMAND_CHARACTERISTIC_UUID = "19b10001-e8f2-537e-4f6c-d104768a1214"; // RX Command ke RP2040 (Trigger/Write)
-const DOOR_CHARACTERISTIC_UUID = "19b10003-e8f2-537e-4f6c-d104768a1214"; // TX Door Command dari RP2040 (Notifications)
+const DATA_CHARACTERISTIC_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214"; // TX Telemetri dari RP2040 (Notifications)
+const DOOR_CHARACTERISTIC_UUID = "19b10003-e8f2-537e-4f6c-d104768a1214"; // TX Door Notification & RX Solenoid Trigger (ESP32 / RP2040)
 const LIVE_CHARACTERISTIC_UUID = "19b10004-e8f2-537e-4f6c-d104768a1214"; // TX Live 20 Hz Waveform dari RP2040 (Notifications)
 
 export type BLEConnectionState = "disconnected" | "connecting" | "connected";
@@ -58,14 +58,35 @@ export interface BLEData {
 }
 
 interface BLEContextType {
+  // Backward compatibility: connectionState mencerminkan status Wearable
   connectionState: BLEConnectionState;
+  
+  // Status koneksi dual-BLE mandiri
+  wearableState: BLEConnectionState;
+  doorLockState: BLEConnectionState;
+  wearableDeviceId: string | null;
+  doorLockDeviceId: string | null;
+
+  // Status fisik solenoid pintu (dari ESP32)
+  isDoorUnlocked: boolean;
+
   bleData: BLEData;
   liveSample: LiveSample | null;
   logs: LogEntry[];
+
+  // Fungsi koneksi & diskoneksi
   connect: () => Promise<void>;
+  connectWearable: () => Promise<void>;
+  connectDoorLock: () => Promise<void>;
   autoConnect: () => Promise<void>;
   disconnect: () => void;
+  disconnectWearable: () => void;
+  disconnectDoorLock: () => void;
+
+  // Kontrol perintah
   sendCommand: (cmd: string) => Promise<boolean>;
+  sendDoorCommand: (cmd: string) => Promise<boolean>;
+
   addLog: (entry: Omit<LogEntry, "id" | "timestamp">) => void;
   resetBleData: () => void;
   setBleData: React.Dispatch<React.SetStateAction<BLEData>>;
@@ -118,11 +139,24 @@ export function useBLE() {
 }
 
 export function BLEProvider({ children }: { children: ReactNode }) {
-  const [connectionState, setConnectionState] = useState<BLEConnectionState>("disconnected");
+  // Dual BLE Connection States
+  const [wearableState, setWearableState] = useState<BLEConnectionState>("disconnected");
+  const [doorLockState, setDoorLockState] = useState<BLEConnectionState>("disconnected");
+  const [wearableDeviceId, setWearableDeviceId] = useState<string | null>(null);
+  const [doorLockDeviceId, setDoorLockDeviceId] = useState<string | null>(null);
+
+  // References untuk pembacaan instan di dalam callbacks tanpa stale closures
+  const wearableDeviceIdRef = useRef<string | null>(null);
+  const doorLockDeviceIdRef = useRef<string | null>(null);
+  const wearableStateRef = useRef<BLEConnectionState>("disconnected");
+  const doorLockStateRef = useRef<BLEConnectionState>("disconnected");
+
+  // Status Solenoid Pintu Fisik
+  const [isDoorUnlocked, setIsDoorUnlocked] = useState<boolean>(false);
+
   const [bleData, setBleData] = useState<BLEData>(defaultBLEData);
   const [liveSample, setLiveSample] = useState<LiveSample | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [deviceId, setDeviceId] = useState<string | null>(null);
 
   const [verifiedUserName, setVerifiedUserName] = useState<string | null>(null);
   const verifiedUserNameRef = useRef<string | null>(null);
@@ -138,11 +172,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   const lastProgress = useRef<number>(0);
   const sessionStartTime = useRef<number>(0);
 
-  // Status & Timer Auto-Reconnect Cerdas
-  const manualDisconnectRef = useRef<boolean>(false);
+  // Status & Timer Auto-Reconnect Cerdas Dual BLE
+  const manualDisconnectWearableRef = useRef<boolean>(false);
+  const manualDisconnectDoorLockRef = useRef<boolean>(false);
   const isAutoConnectingRef = useRef<boolean>(false);
   const autoConnectTimerRef = useRef<any>(null);
   const autoConnectRef = useRef<() => Promise<void>>(async () => {});
+
   const currentSessionWaveform = useRef<Array<{
     t: number;
     val: number;
@@ -176,6 +212,15 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const latestTelemetryRef = useRef<BLETelemetry>(defaultBLEData.telemetry);
 
+  // Selaraskan state refs
+  useEffect(() => {
+    wearableStateRef.current = wearableState;
+  }, [wearableState]);
+
+  useEffect(() => {
+    doorLockStateRef.current = doorLockState;
+  }, [doorLockState]);
+
   const setActiveSession = useCallback((info: { mode: "auth" | "training" | null; slot: number; name: string }) => {
     activeSessionInfo.current = info;
     sessionLogged.current = false;
@@ -196,7 +241,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Initialize and load system logs from database on startup
+  // Inisialisasi awal log sistem dari database SQLite
   useEffect(() => {
     databaseService.initialize().then(async () => {
       try {
@@ -251,23 +296,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     currentSessionSteps.current = [];
   }, []);
 
-  const onDisconnected = useCallback((disconnectedDeviceId: string) => {
-    setConnectionState("disconnected");
-    setDeviceId(null);
-    addLog({ type: "system", status: "Info", message: "Terputus dari Smart Key" });
-
-    // Jika bukan pemutusan manual oleh pengguna, jadwalkan auto-reconnect dalam 3 detik
-    if (!manualDisconnectRef.current) {
-      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
-      autoConnectTimerRef.current = setTimeout(() => {
-        addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Smart Key..." });
-        if (autoConnectRef.current) {
-          autoConnectRef.current();
-        }
-      }, 3000);
-    }
-  }, [addLog]);
-
   const logAuthSession = useCallback((decision: "SUCCESS" | "FAILED", userName?: string) => {
     if (sessionLogged.current || activeSessionInfo.current.mode !== "auth") return;
     sessionLogged.current = true;
@@ -278,7 +306,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       : 7.5;
     const t = latestTelemetryRef.current;
 
-    // Prioritaskan skor kandidat tertinggi dari paket SCORES agar konsisten dengan rincian kandidat 1-vs-All
     const maxCandidateScore = latestAuthScoresRef.current.length > 0
       ? Math.max(...latestAuthScoresRef.current.map(s => s.score))
       : (t.confidenceScore || 0);
@@ -299,7 +326,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       summary: {
         totalWindows: Math.max(lastProgress.current || 5, currentSessionSteps.current.length, 5),
         confidenceScore: parseFloat(scoreVal.toFixed(1)),
-        logLikelihood: parseFloat(((t.logLikelihood !== undefined && t.logLikelihood !== 0) ? t.logLikelihood : -25.0).toFixed(2)),
+        logLikelihood: parseFloat((t.logLikelihood || 0).toFixed(2)),
         mean: parseFloat((t.mean || 0).toFixed(3)),
         variance: parseFloat((t.variance || 0).toFixed(3)),
         stdDev: parseFloat((t.stdDev || 0).toFixed(3)),
@@ -314,69 +341,100 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       waveform: currentSessionWaveform.current,
     });
 
-    if (decision === "SUCCESS") {
-      databaseService.addAuthLog({
-        timestamp,
-        userId: resolvedUser,
-        score: scoreStr,
-        status: "SUCCESS",
-        incremental: `Adaptive (${deltaStr})`,
-        message: `Verifikasi Gait Berhasil (${resolvedUser}) - Akses Terbuka`,
-        details: finalDetails,
-      }).catch(console.error);
-    } else {
-      databaseService.addAuthLog({
-        timestamp,
-        userId: "Unknown / Rejected",
-        score: scoreStr,
-        status: "FAILED",
-        incremental: "Rejected",
-        message: "Pola Gait Tidak Sesuai Ambang CIR 80%",
-        details: finalDetails,
-      }).catch(console.error);
-    }
+    databaseService.addAuthLog({
+      timestamp,
+      userId: resolvedUser,
+      score: scoreStr,
+      status: decision,
+      incremental: deltaStr,
+      message: decision === "SUCCESS"
+        ? `Autentikasi Berhasil - Pintu Terbuka (${resolvedUser})`
+        : `Autentikasi Ditolak - Pola Gaya Berjalan Tidak Cocok (${scoreStr})`,
+      details: finalDetails,
+    }).catch(console.error);
   }, []);
 
-  const handleDoorNotification = useCallback((value: DataView) => {
+  // ── Penanganan Diskoneksi Mandiri ─────────────────────────────────────────
+  const onWearableDisconnected = useCallback((devId: string) => {
+    console.log("[BLE] Wearable disconnected:", devId);
+    setWearableState("disconnected");
+    setWearableDeviceId(null);
+    wearableDeviceIdRef.current = null;
+    addLog({ type: "system", status: "Warning", message: "Terputus dari Wearable (Arduino RP2040)" });
+
+    if (!manualDisconnectWearableRef.current) {
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = setTimeout(() => {
+        addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Wearable..." });
+        if (autoConnectRef.current) autoConnectRef.current();
+      }, 3000);
+    }
+  }, [addLog]);
+
+  const onDoorLockDisconnected = useCallback((devId: string) => {
+    console.log("[BLE] DoorLock disconnected:", devId);
+    setDoorLockState("disconnected");
+    setDoorLockDeviceId(null);
+    doorLockDeviceIdRef.current = null;
+    setIsDoorUnlocked(false);
+    addLog({ type: "system", status: "Warning", message: "Terputus dari Smart Door Lock (ESP32)" });
+
+    if (!manualDisconnectDoorLockRef.current) {
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = setTimeout(() => {
+        addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Door Lock..." });
+        if (autoConnectRef.current) autoConnectRef.current();
+      }, 3000);
+    }
+  }, [addLog]);
+
+  // ── Callback Notifikasi dari ESP32 Door Lock ──────────────────────────────
+  const handleDoorLockNotification = useCallback((value: DataView) => {
     try {
-      const text = dataViewToText(value).trim();
-      console.log("[BLE DOOR EVENT]", text);
+      const text = dataViewToText(value);
+      console.log("[BLE ESP32 Door Notification]", text);
+
+      if (text === "DOOR_OPENED" || text.includes("UNLOCKED")) {
+        setIsDoorUnlocked(true);
+        addLog({ type: "system", status: "Success", message: "ESP32: Solenoid Terbuka (Door Unlocked)" });
+      } else if (text === "DOOR_LOCKED" || text.includes("LOCKED")) {
+        setIsDoorUnlocked(false);
+        addLog({ type: "system", status: "Info", message: "ESP32: Solenoid Mengunci (Door Locked)" });
+      }
+    } catch (err) {
+      console.error("Gagal membaca notifikasi status pintu ESP32:", err);
+    }
+  }, [addLog]);
+
+  // ── Callback Notifikasi dari Arduino Wearable (DOOR / CONTROL) ─────────────
+  const handleWearableDoorNotification = useCallback(async (value: DataView) => {
+    try {
+      const text = dataViewToText(value);
+      console.log("[BLE Wearable Door Notification]", text);
+
       if (text.startsWith("SCORES:")) {
-        // Parsing multi-user score breakdown, misal: "SCORES:0:62.5|1:81.2|2:45.0"
-        const scoresRaw = text.substring(7);
-        const items = scoresRaw.split("|");
-        const list: { slot: number; score: number }[] = [];
-        items.forEach((item) => {
-          const [sStr, scStr] = item.split(":");
-          if (sStr !== undefined && scStr !== undefined) {
-            const slot = parseInt(sStr, 10);
-            const score = parseFloat(scStr);
-            if (!isNaN(slot) && !isNaN(score)) {
-              list.push({ slot, score });
-            }
+        const payload = text.substring(7);
+        const pairs = payload.split(";");
+        const list: Array<{ slot: number; score: number }> = [];
+        pairs.forEach((p) => {
+          const [sStr, vStr] = p.split("=");
+          if (sStr !== undefined && vStr !== undefined) {
+            const s = parseInt(sStr, 10);
+            const v = parseFloat(vStr);
+            if (!isNaN(s) && !isNaN(v)) list.push({ slot: s, score: v });
           }
         });
-        latestAuthScoresRef.current = list;
-        console.log("[AUTH BREAKDOWN]", list);
+        if (list.length > 0) latestAuthScoresRef.current = list;
       } else if (text.startsWith("GATES:")) {
-        // Parsing paket diagnostik gerbang fisik (Tahap 0: Shadow Mode Diagnostics)
-        // Format: "GATES:j=0.215|a=1.45|ex=28.5|cf=2.35|ad=0.68|dG=12.3"
-        const raw = text.substring(6);
-        const parts = raw.split("|");
-        const gData = {
-          normJerk: 0,
-          asym: 1.0,
-          excursion: 0,
-          crestFactor: 0,
-          axisDominance: 0,
-          deltaGyro: 0,
-        };
-        parts.forEach((p) => {
-          const [k, v] = p.split("=");
-          const val = parseFloat(v);
-          if (!isNaN(val)) {
-            if (k === "j") gData.normJerk = val;
-            else if (k === "a") gData.asym = val;
+        const payload = text.substring(6);
+        const pairs = payload.split(";");
+        const gData: any = { normJerk: 0, asym: 0, excursion: 0, crestFactor: 0, axisDominance: 0, deltaGyro: 0 };
+        pairs.forEach((p) => {
+          const [k, vStr] = p.split("=");
+          if (k && vStr !== undefined) {
+            const val = parseFloat(vStr);
+            if (k === "nj") gData.normJerk = val;
+            else if (k === "as") gData.asym = val;
             else if (k === "ex") gData.excursion = val;
             else if (k === "cf") gData.crestFactor = val;
             else if (k === "ad") gData.axisDominance = val;
@@ -384,7 +442,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
           }
         });
         latestGatesRef.current = gData;
-        console.log("[DIAGNOSTIC GATES]", gData);
       } else if (text.startsWith("OPEN_DOOR")) {
         const parts = text.split(":");
         const name = parts.length > 1 ? parts.slice(1).join(":").trim() : "Owner";
@@ -397,10 +454,29 @@ export function BLEProvider({ children }: { children: ReactNode }) {
           setVerifiedUserName("PIN_BYPASS");
         }
         setBleData(prev => ({ ...prev, authStatus: "success" }));
+        
         if (name === "PIN_BYPASS") {
           addLog({ type: "system", status: "Success", message: "Akses Diterima: Pintu Terbuka via PIN Bypass" });
         } else {
           addLog({ type: "system", status: "Success", message: `Akses Diterima: Identitas ${cleanName || name} Terverifikasi!` });
+        }
+
+        // AUTO-FORWARD KE ESP32 DOOR LOCK: Memicu relay solenoid fisik
+        if (doorLockDeviceIdRef.current) {
+          try {
+            await BleClient.writeWithoutResponse(
+              doorLockDeviceIdRef.current,
+              SMART_KEY_SERVICE_UUID,
+              DOOR_CHARACTERISTIC_UUID,
+              textToDataView(text)
+            );
+            addLog({ type: "system", status: "Success", message: "Sinyal Buka Pintu (OPEN_DOOR) otomatis diteruskan ke ESP32 Solenoid" });
+          } catch (fwdErr) {
+            console.error("Gagal meneruskan OPEN_DOOR ke ESP32:", fwdErr);
+            addLog({ type: "system", status: "Warning", message: "Gagal meneruskan sinyal buka ke ESP32 Door Lock" });
+          }
+        } else {
+          addLog({ type: "system", status: "Warning", message: "ESP32 Door Lock belum terhubung (Solenoid fisik tidak dipicu)" });
         }
 
         // Catat langsung hasil autentikasi sukses ke database SQLite
@@ -411,12 +487,22 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         setBleData(prev => ({ ...prev, authStatus: "failed" }));
         addLog({ type: "system", status: "Failed", message: "Akses Ditolak: Pola Gait Tidak Cocok" });
 
-        // Catat langsung hasil autentikasi ditolak ke database SQLite
         if (activeSessionInfo.current.mode === "auth" && !sessionLogged.current) {
           logAuthSession("FAILED");
         }
       } else if (text === "CLOSE_DOOR") {
         addLog({ type: "system", status: "Info", message: "Pintu Terkunci (CLOSE_DOOR)" });
+        // Teruskan juga perintah close ke ESP32 jika terhubung
+        if (doorLockDeviceIdRef.current) {
+          try {
+            await BleClient.writeWithoutResponse(
+              doorLockDeviceIdRef.current,
+              SMART_KEY_SERVICE_UUID,
+              DOOR_CHARACTERISTIC_UUID,
+              textToDataView("CLOSE_DOOR")
+            );
+          } catch (_) {}
+        }
       } else if (text.startsWith("TRAIN_SUCCESS")) {
         const parts = text.split(":");
         const trainedSlot = parts.length > 1 ? parseInt(parts[1], 10) : activeSessionInfo.current.slot;
@@ -461,7 +547,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
             databaseService.saveUserProfile(slotIdx, name).catch(console.error);
             databaseService.ensureRegLogForSlot(slotIdx, name).catch(console.error);
           } else {
-            // Jika di flash RP2040 slot ini kosong, bersihkan profil aktif & log slot terkait agar selaras
             databaseService.deleteUserProfile(slotIdx).catch(console.error);
             databaseService.removeRegLogsForSlot(slotIdx).catch(console.error);
           }
@@ -473,8 +558,9 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.error("Gagal memproses notifikasi door:", e);
     }
-  }, [addLog]);
+  }, [addLog, logAuthSession]);
 
+  // ── Callback Notifikasi 20 Hz Waveform dari RP2040 ─────────────────────────
   const handleLiveNotification = useCallback((value: DataView) => {
     try {
       if (value.byteLength >= 9) {
@@ -484,7 +570,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         const now = Date.now();
         setLiveSample({ liveVal, energy, isMoving, timestamp: now });
 
-        // Rekam titik gelombang IMU 20 Hz beresolusi tinggi selama sesi aktif berlangsung
         if (activeSessionInfo.current.mode && !sessionLogged.current) {
           if (sessionStartTime.current === 0) {
             sessionStartTime.current = now;
@@ -503,6 +588,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // ── Callback Notifikasi Telemetri Data dari RP2040 ─────────────────────────
   const handleDataNotification = useCallback((value: DataView) => {
     try {
       const timestamp = formatLogTimestamp();
@@ -520,8 +606,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       let emaDelta = 0.0;
 
       if (value.byteLength >= 18) {
-        // Parsing Biner C-struct TelemetryData (little-endian)
-        // Mendukung baik paket 20-byte (MTU 23) maupun 38-byte (MTU 247)
         windowIndex = value.getUint8(0);
         zuptCode = value.getUint8(1);
         isZUPTValid = (zuptCode === 1);
@@ -536,7 +620,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         adaptiveThreshold = value.byteLength >= 34 ? value.getFloat32(30, true) : 0.0;
         emaDelta = value.byteLength >= 38 ? value.getFloat32(34, true) : 0.0;
       } else {
-        // Fallback teks JSON jika dikirim lewat simulator
         try {
           const text = dataViewToText(value);
           const j = JSON.parse(text);
@@ -546,16 +629,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         } catch (_) {}
       }
 
-      // Tentukan teks status ZUPT secara deskriptif untuk UI dan Log
       const zuptStatusStr = isZUPTValid ? "Valid (Active Gait)" : "Still (Discarded)";
 
-      // Jaga agar progres tidak turun saat langkah diam terdeteksi
       if (windowIndex > lastProgress.current) {
         lastProgress.current = windowIndex;
       }
       const displayProgress = Math.max(windowIndex, lastProgress.current);
 
-      // Catat rincian langkah aktif ke memori sesi jika ada langkah valid baru
       if (windowIndex > 0 && isZUPTValid) {
         const alreadyRecorded = currentSessionSteps.current.some(s => s.step === windowIndex);
         if (!alreadyRecorded) {
@@ -619,7 +699,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       latestTelemetryRef.current = newBleData.telemetry;
       setBleData(newBleData);
 
-      // Simpan ke Log SQLite saat sesi selesai (5/5)
       if (displayProgress >= 5 && !sessionLogged.current) {
         const sessionMode = activeSessionInfo.current.mode;
         if (sessionMode === "training") {
@@ -666,7 +745,6 @@ export function BLEProvider({ children }: { children: ReactNode }) {
             setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
           }).catch(console.error);
         } else if (sessionMode === "auth") {
-          // Mode autentikasi: beri toleransi 450ms bagi paket SCORES & OPEN_DOOR/ACCESS_DENIED dari RP2040 agar rincian tercatat lengkap
           setTimeout(() => {
             if (!sessionLogged.current && activeSessionInfo.current.mode === "auth") {
               logAuthSession(confidenceScore >= 80.0 ? "SUCCESS" : "FAILED");
@@ -677,10 +755,11 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error("Gagal memproses data notifikasi BLE:", err);
     }
-  }, [verifiedUserName]);
+  }, [logAuthSession]);
 
-  const setupNotificationsForDevice = async (targetDeviceId: string) => {
-    // 1. Setup Notifications untuk Telemetri Data
+  // ── Setup Notifikasi Perangkat Wearable ────────────────────────────────────
+  const setupNotificationsForWearable = async (targetDeviceId: string) => {
+    // 1. Telemetri data klasifikasi GHMM
     await BleClient.startNotifications(
       targetDeviceId,
       SMART_KEY_SERVICE_UUID,
@@ -688,19 +767,19 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       handleDataNotification
     );
 
-    // 2. Setup Notifications untuk Sinyal Kontrol Pintu (OPEN_DOOR / ACCESS_DENIED)
+    // 2. Sinyal kontrol pintu & event status (OPEN_DOOR / ACCESS_DENIED)
     try {
       await BleClient.startNotifications(
         targetDeviceId,
         SMART_KEY_SERVICE_UUID,
         DOOR_CHARACTERISTIC_UUID,
-        handleDoorNotification
+        handleWearableDoorNotification
       );
     } catch (doorErr) {
-      console.log("Door notification optional fallback:", doorErr);
+      console.log("Door notification fallback:", doorErr);
     }
 
-    // 3. Setup Notifications untuk 20 Hz Live Waveform Data (Pure Real Data)
+    // 3. 20 Hz Live Waveform Data
     try {
       await BleClient.startNotifications(
         targetDeviceId,
@@ -709,104 +788,150 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         handleLiveNotification
       );
     } catch (liveErr) {
-      console.log("Live 20Hz notification optional fallback:", liveErr);
+      console.log("Live 20Hz notification fallback:", liveErr);
     }
   };
 
-  const performConnection = async (targetDevice: { deviceId: string; name?: string }) => {
-    addLog({ type: "system", status: "Info", message: `Menghubungkan ke ${targetDevice.name || "Smart Key"}...` });
-    await BleClient.connect(targetDevice.deviceId, (id) => onDisconnected(id));
-    await setupNotificationsForDevice(targetDevice.deviceId);
+  // ── Setup Notifikasi Perangkat ESP32 Door Lock ────────────────────────────
+  const setupNotificationsForDoorLock = async (targetDeviceId: string) => {
+    try {
+      await BleClient.startNotifications(
+        targetDeviceId,
+        SMART_KEY_SERVICE_UUID,
+        DOOR_CHARACTERISTIC_UUID,
+        handleDoorLockNotification
+      );
+    } catch (doorErr) {
+      console.log("ESP32 Door Lock notification error:", doorErr);
+    }
+  };
 
+  // ── Koneksi Wearable ──────────────────────────────────────────────────────
+  const performWearableConnection = async (targetDevice: { deviceId: string; name?: string }) => {
+    addLog({ type: "system", status: "Info", message: `Menghubungkan ke Wearable (${targetDevice.name || "RP2040"})...` });
+    setWearableState("connecting");
+    await BleClient.connect(targetDevice.deviceId, (id) => onWearableDisconnected(id));
+    await setupNotificationsForWearable(targetDevice.deviceId);
+
+    localStorage.setItem("smartkey_wearable_id", targetDevice.deviceId);
     localStorage.setItem("smartkey_last_device_id", targetDevice.deviceId);
     if (targetDevice.name) {
-      localStorage.setItem("smartkey_last_device_name", targetDevice.name);
+      localStorage.setItem("smartkey_wearable_name", targetDevice.name);
     }
 
-    setDeviceId(targetDevice.deviceId);
-    setConnectionState("connected");
-    manualDisconnectRef.current = false;
-    addLog({ type: "system", status: "Success", message: "Berhasil terhubung ke Smart Key" });
+    wearableDeviceIdRef.current = targetDevice.deviceId;
+    setWearableDeviceId(targetDevice.deviceId);
+    setWearableState("connected");
+    manualDisconnectWearableRef.current = false;
+    addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Wearable (${targetDevice.name || "SmartKey_Wearable"})` });
   };
 
-  const autoConnect = useCallback(async () => {
-    if (connectionState === "connected" || isAutoConnectingRef.current || manualDisconnectRef.current) {
-      return;
+  // ── Koneksi ESP32 Door Lock ───────────────────────────────────────────────
+  const performDoorLockConnection = async (targetDevice: { deviceId: string; name?: string }) => {
+    addLog({ type: "system", status: "Info", message: `Menghubungkan ke Solenoid Door Lock (${targetDevice.name || "ESP32"})...` });
+    setDoorLockState("connecting");
+    await BleClient.connect(targetDevice.deviceId, (id) => onDoorLockDisconnected(id));
+    await setupNotificationsForDoorLock(targetDevice.deviceId);
+
+    localStorage.setItem("smartkey_doorlock_id", targetDevice.deviceId);
+    if (targetDevice.name) {
+      localStorage.setItem("smartkey_doorlock_name", targetDevice.name);
     }
+
+    doorLockDeviceIdRef.current = targetDevice.deviceId;
+    setDoorLockDeviceId(targetDevice.deviceId);
+    setDoorLockState("connected");
+    manualDisconnectDoorLockRef.current = false;
+    addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Door Lock (${targetDevice.name || "SmartKey_DoorLock"})` });
+  };
+
+  // ── Auto-Connect Cerdas Dual Peripheral ───────────────────────────────────
+  const autoConnect = useCallback(async () => {
+    if (isAutoConnectingRef.current) return;
 
     try {
       isAutoConnectingRef.current = true;
       await BleClient.initialize();
 
-      const lastId = localStorage.getItem("smartkey_last_device_id");
-      const lastName = localStorage.getItem("smartkey_last_device_name") || "SmartKey_Wearable";
+      const lastWearableId = localStorage.getItem("smartkey_wearable_id") || localStorage.getItem("smartkey_last_device_id");
+      const lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
 
-      // 1. Coba koneksi langsung ke ID perangkat terakhir yang pernah terhubung
-      if (lastId) {
+      // 1. Coba koneksi langsung ke Wearable jika belum terhubung
+      if (lastWearableId && wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current) {
         try {
-          console.log("[BLE AUTO] Mencoba direct-connect ke:", lastId);
-          setConnectionState("connecting");
-          await performConnection({ deviceId: lastId, name: lastName });
-          isAutoConnectingRef.current = false;
-          return;
-        } catch (directErr) {
-          console.log("[BLE AUTO] Direct connect gagal, beralih ke scan...", directErr);
+          console.log("[BLE AUTO] Direct connect ke Wearable:", lastWearableId);
+          await performWearableConnection({ deviceId: lastWearableId, name: "SmartKey_Wearable" });
+        } catch (e) {
+          console.log("[BLE AUTO] Direct connect Wearable gagal:", e);
         }
       }
 
-      // 2. Scan latar belakang untuk mencari perangkat dengan Service UUID SmartKey
-      console.log("[BLE AUTO] Memulai background scan...");
-      setConnectionState("connecting");
-      let foundDevice: { deviceId: string; name?: string } | null = null;
+      // 2. Coba koneksi langsung ke ESP32 Door Lock jika belum terhubung
+      if (lastDoorLockId && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current) {
+        try {
+          console.log("[BLE AUTO] Direct connect ke DoorLock:", lastDoorLockId);
+          await performDoorLockConnection({ deviceId: lastDoorLockId, name: "SmartKey_DoorLock" });
+        } catch (e) {
+          console.log("[BLE AUTO] Direct connect DoorLock gagal:", e);
+        }
+      }
 
-      await BleClient.requestLEScan(
-        { services: [SMART_KEY_SERVICE_UUID] },
-        async (result) => {
-          if (!foundDevice && result.device) {
+      // 3. Jika salah satu atau keduanya belum terhubung, jalankan scan latar belakang
+      const needWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+      const needDoorLock = doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+
+      if (needWearable || needDoorLock) {
+        console.log("[BLE AUTO] Memulai background scan dual device...");
+        await BleClient.requestLEScan(
+          { services: [SMART_KEY_SERVICE_UUID] },
+          async (result) => {
+            if (!result.device) return;
             const devName = result.device.name || result.localName || "";
-            if (devName.includes("SmartKey") || result.device.deviceId === lastId || !devName) {
-              foundDevice = {
-                deviceId: result.device.deviceId,
-                name: devName || "SmartKey_Wearable",
-              };
+            const dId = result.device.deviceId;
+
+            if (devName.includes("DoorLock") && doorLockStateRef.current !== "connected") {
+              try {
+                await performDoorLockConnection({ deviceId: dId, name: devName });
+              } catch (connErr) {
+                console.error("[BLE AUTO] Gagal hubungkan door lock:", connErr);
+              }
+            } else if ((devName.includes("Wearable") || (!devName.includes("DoorLock") && devName.includes("SmartKey"))) && wearableStateRef.current !== "connected") {
+              try {
+                await performWearableConnection({ deviceId: dId, name: devName || "SmartKey_Wearable" });
+              } catch (connErr) {
+                console.error("[BLE AUTO] Gagal hubungkan wearable:", connErr);
+              }
+            }
+
+            // Jika keduanya sudah terhubung, hentikan scan lebih awal
+            if (wearableStateRef.current === "connected" && doorLockStateRef.current === "connected") {
               try {
                 await BleClient.stopLEScan();
               } catch (_) {}
-              try {
-                await performConnection(foundDevice);
-              } catch (connErr) {
-                console.error("[BLE AUTO] Gagal konek ke scan result:", connErr);
-                setConnectionState("disconnected");
-              }
             }
           }
-        }
-      );
+        );
 
-      // Batasi scan latar belakang maks 6 detik agar hemat baterai
-      setTimeout(async () => {
-        try {
-          await BleClient.stopLEScan();
-        } catch (_) {}
-        if (!foundDevice) {
-          setConnectionState((prev) => (prev === "connected" ? prev : "disconnected"));
-        }
+        // Scan dibatasi 6 detik
+        setTimeout(async () => {
+          try {
+            await BleClient.stopLEScan();
+          } catch (_) {}
+          isAutoConnectingRef.current = false;
+        }, 6000);
+      } else {
         isAutoConnectingRef.current = false;
-      }, 6000);
-
+      }
     } catch (err) {
       console.log("[BLE AUTO] Error auto connect:", err);
-      setConnectionState("disconnected");
       isAutoConnectingRef.current = false;
     }
-  }, [connectionState, onDisconnected]);
+  }, []);
 
-  // Pasang reference autoConnect untuk callback onDisconnected
   useEffect(() => {
     autoConnectRef.current = autoConnect;
   }, [autoConnect]);
 
-  // Auto-connect saat aplikasi pertama kali dibuka (jeda 1.5 detik setelah inisialisasi awal)
   useEffect(() => {
     const startupTimer = setTimeout(() => {
       autoConnect();
@@ -818,75 +943,156 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     };
   }, [autoConnect]);
 
-  const connect = async () => {
-    manualDisconnectRef.current = false;
-    if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+  // ── Dialog Pemilihan Perangkat BLE Manual ─────────────────────────────────
+  const connectWearable = async () => {
+    manualDisconnectWearableRef.current = false;
     try {
-      setConnectionState("connecting");
-      addLog({ type: "system", status: "Info", message: "Mencari Perangkat Bluetooth..." });
-      
+      setWearableState("connecting");
+      addLog({ type: "system", status: "Info", message: "Mencari Wearable BLE..." });
       await BleClient.initialize();
-
-      const selectedDevice = await BleClient.requestDevice({
-        services: [SMART_KEY_SERVICE_UUID],
-      });
-      
-      await performConnection(selectedDevice);
-    } catch (error) {
-      console.error(error);
-      setConnectionState("disconnected");
-      addLog({ type: "system", status: "Failed", message: `Koneksi gagal: ${(error as Error).message}` });
+      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
+      await performWearableConnection(selected);
+    } catch (err) {
+      setWearableState("disconnected");
+      addLog({ type: "system", status: "Failed", message: `Koneksi Wearable gagal: ${(err as Error).message}` });
     }
   };
 
-  const disconnect = useCallback(async () => {
-    manualDisconnectRef.current = true;
-    if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
-    if (deviceId) {
+  const connectDoorLock = async () => {
+    manualDisconnectDoorLockRef.current = false;
+    try {
+      setDoorLockState("connecting");
+      addLog({ type: "system", status: "Info", message: "Mencari Smart Door Lock ESP32..." });
+      await BleClient.initialize();
+      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
+      await performDoorLockConnection(selected);
+    } catch (err) {
+      setDoorLockState("disconnected");
+      addLog({ type: "system", status: "Failed", message: `Koneksi Door Lock gagal: ${(err as Error).message}` });
+    }
+  };
+
+  const connect = async () => {
+    // Default action tombol connect: jika wearable belum terhubung, hubungkan wearable; atau sebaliknya
+    manualDisconnectWearableRef.current = false;
+    manualDisconnectDoorLockRef.current = false;
+    try {
+      await BleClient.initialize();
+      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
+      const name = selected.name || "";
+      if (name.includes("DoorLock")) {
+        await performDoorLockConnection(selected);
+      } else {
+        await performWearableConnection(selected);
+      }
+    } catch (err) {
+      addLog({ type: "system", status: "Failed", message: `Koneksi gagal: ${(err as Error).message}` });
+    }
+  };
+
+  const disconnectWearable = useCallback(async () => {
+    manualDisconnectWearableRef.current = true;
+    if (wearableDeviceIdRef.current) {
       try {
-        await BleClient.disconnect(deviceId);
+        await BleClient.disconnect(wearableDeviceIdRef.current);
       } catch (err) {
         console.error(err);
       }
     }
-    setConnectionState("disconnected");
-    setDeviceId(null);
-    addLog({ type: "system", status: "Info", message: "Koneksi diputus secara manual" });
-  }, [deviceId, addLog]);
+    setWearableState("disconnected");
+    setWearableDeviceId(null);
+    wearableDeviceIdRef.current = null;
+    addLog({ type: "system", status: "Info", message: "Koneksi Wearable diputus secara manual" });
+  }, [addLog]);
 
+  const disconnectDoorLock = useCallback(async () => {
+    manualDisconnectDoorLockRef.current = true;
+    if (doorLockDeviceIdRef.current) {
+      try {
+        await BleClient.disconnect(doorLockDeviceIdRef.current);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    setDoorLockState("disconnected");
+    setDoorLockDeviceId(null);
+    doorLockDeviceIdRef.current = null;
+    setIsDoorUnlocked(false);
+    addLog({ type: "system", status: "Info", message: "Koneksi Smart Door Lock diputus secara manual" });
+  }, [addLog]);
+
+  const disconnect = useCallback(async () => {
+    await disconnectWearable();
+    await disconnectDoorLock();
+  }, [disconnectWearable, disconnectDoorLock]);
+
+  // ── Kirim Perintah ke Arduino RP2040 ──────────────────────────────────────
   const sendCommand = async (cmd: string): Promise<boolean> => {
-    if (!deviceId) {
-      addLog({ type: "system", status: "Failed", message: "Perangkat tidak terhubung" });
+    // Jika perintah adalah kontrol pintu manual, teruskan juga ke ESP32 Door Lock
+    if (cmd === "LOCK_DOOR" || cmd === "CLOSE_DOOR") {
+      await sendDoorCommand("CLOSE_DOOR");
+    } else if (cmd === "UNLOCK_MANUAL" || cmd.startsWith("PIN_")) {
+      await sendDoorCommand("OPEN_DOOR:PIN_BYPASS");
+    }
+
+    if (!wearableDeviceIdRef.current) {
+      addLog({ type: "system", status: "Failed", message: "Wearable RP2040 belum terhubung" });
       return false;
     }
+
     try {
       await BleClient.write(
-        deviceId,
+        wearableDeviceIdRef.current,
         SMART_KEY_SERVICE_UUID,
         COMMAND_CHARACTERISTIC_UUID,
         textToDataView(cmd)
       );
-      addLog({ type: "system", status: "Success", message: `Perintah terkirim: ${cmd}` });
+      addLog({ type: "system", status: "Success", message: `Perintah Wearable: ${cmd}` });
       return true;
     } catch (error) {
-      console.error("Gagal mengirim perintah", error);
-      addLog({ type: "system", status: "Failed", message: `Gagal mengirim: ${(error as Error).message}` });
+      console.error("Gagal mengirim perintah ke Wearable", error);
+      addLog({ type: "system", status: "Failed", message: `Gagal mengirim ke Wearable: ${(error as Error).message}` });
       return false;
     }
   };
 
+  // ── Kirim Perintah Langsung ke ESP32 Solenoid Door Lock ───────────────────
+  const sendDoorCommand = async (cmd: string): Promise<boolean> => {
+    let success = false;
+    if (doorLockDeviceIdRef.current) {
+      try {
+        await BleClient.write(
+          doorLockDeviceIdRef.current,
+          SMART_KEY_SERVICE_UUID,
+          DOOR_CHARACTERISTIC_UUID,
+          textToDataView(cmd)
+        );
+        addLog({ type: "system", status: "Success", message: `Perintah Door Lock (ESP32): ${cmd}` });
+        success = true;
+      } catch (err) {
+        console.error("Gagal mengirim perintah ke ESP32 Door Lock:", err);
+        addLog({ type: "system", status: "Failed", message: `Gagal kirim ke Door Lock: ${(err as Error).message}` });
+      }
+    } else {
+      addLog({ type: "system", status: "Warning", message: "ESP32 Door Lock belum terhubung Bluetooth" });
+    }
+
+    return success;
+  };
+
+  // ── Operasi Flash Memori RP2040 ───────────────────────────────────────────
   const syncFlashUsers = useCallback(async (): Promise<boolean> => {
-    if (connectionState !== "connected") {
-      addLog({ type: "system", status: "Warning", message: "Gagal sinkron: Smart Key belum terhubung Bluetooth" });
+    if (wearableStateRef.current !== "connected") {
+      addLog({ type: "system", status: "Warning", message: "Gagal sinkron: Wearable belum terhubung Bluetooth" });
       return false;
     }
     addLog({ type: "system", status: "Info", message: "Meminta sinkronisasi status Flash memori RP2040..." });
     return await sendCommand("SYNC_FLASH");
-  }, [connectionState, sendCommand, addLog]);
+  }, [sendCommand, addLog]);
 
   const deleteFlashUser = useCallback(async (slot: number): Promise<boolean> => {
-    if (connectionState !== "connected") {
-      addLog({ type: "system", status: "Warning", message: "Gagal hapus: Smart Key belum terhubung Bluetooth" });
+    if (wearableStateRef.current !== "connected") {
+      addLog({ type: "system", status: "Warning", message: "Gagal hapus: Wearable belum terhubung Bluetooth" });
       return false;
     }
     addLog({ type: "system", status: "Info", message: `Menghapus Slot ${slot + 1} dari Flash RP2040...` });
@@ -897,11 +1103,11 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
     }
     return ok;
-  }, [connectionState, sendCommand, addLog]);
+  }, [sendCommand, addLog]);
 
   const formatFlashMemory = useCallback(async (): Promise<boolean> => {
-    if (connectionState !== "connected") {
-      addLog({ type: "system", status: "Warning", message: "Gagal format: Smart Key belum terhubung Bluetooth" });
+    if (wearableStateRef.current !== "connected") {
+      addLog({ type: "system", status: "Warning", message: "Gagal format: Wearable belum terhubung Bluetooth" });
       return false;
     }
     addLog({ type: "system", status: "Warning", message: "Memformat seluruh memori Flash RP2040..." });
@@ -912,18 +1118,28 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       setTimeout(() => setFlashSyncVersion((v) => v + 1), 60);
     }
     return ok;
-  }, [connectionState, sendCommand, addLog]);
+  }, [sendCommand, addLog]);
 
   return (
     <BLEContext.Provider value={{
-      connectionState,
+      connectionState: wearableState, // Backward compatible mapping
+      wearableState,
+      doorLockState,
+      wearableDeviceId,
+      doorLockDeviceId,
+      isDoorUnlocked,
       bleData,
       liveSample,
       logs,
       connect,
+      connectWearable,
+      connectDoorLock,
       autoConnect,
       disconnect,
+      disconnectWearable,
+      disconnectDoorLock,
       sendCommand,
+      sendDoorCommand,
       addLog,
       resetBleData,
       setBleData,

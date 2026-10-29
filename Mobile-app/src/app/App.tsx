@@ -40,12 +40,20 @@ export default function App() {
 function AppContent() {
   const {
     connectionState,
+    wearableState,
+    doorLockState,
+    isDoorUnlocked,
     bleData,
     liveSample,
     setBleData,
     connect,
+    connectWearable,
+    connectDoorLock,
     disconnect,
+    disconnectWearable,
+    disconnectDoorLock,
     sendCommand,
+    sendDoorCommand,
     resetBleData,
     addLog,
     setActiveSession,
@@ -83,9 +91,14 @@ function AppContent() {
   // Real progress from BLE
   const progress = bleData.progress || 0;
 
+  // Sinkronisasi status pintu fisik secara real-time dari notifikasi ESP32
+  useEffect(() => {
+    setDoorStatus(isDoorUnlocked ? "unlocked" : "locked");
+  }, [isDoorUnlocked]);
+
   // Toggle buka/tutup pintu (Buka pintu diwajibkan menggunakan PIN Bypass & BLE aktif)
   const toggleDoor = async () => {
-    if (connectionState !== "connected") {
+    if (doorLockState !== "connected" && connectionState !== "connected") {
       alert("Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dikontrol saat terhubung ke perangkat BLE.");
       return;
     }
@@ -94,7 +107,7 @@ function AppContent() {
       setEmergencyOpen(true);
     } else {
       setDoorStatus("locked");
-      await sendCommand("LOCK_DOOR");
+      await sendDoorCommand("CLOSE_DOOR");
       addLog({ type: "system", status: "Info", message: "Pintu dikunci manual (LOCKED)" });
     }
   };
@@ -232,23 +245,49 @@ function AppContent() {
           paddingBottom: "12px",
         }}
       >
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <button 
-            onClick={() => connectionState === 'connected' ? disconnect() : connect()}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full transition-all active:scale-95 cursor-pointer" 
-            style={{ 
-              background: connectionState === 'connected' ? "#F0FDF4" : connectionState === 'connecting' ? "#FEF3C7" : "#F1F5F9", 
-              border: `1px solid ${connectionState === 'connected' ? "#BBF7D0" : connectionState === 'connecting' ? "#FDE68A" : "#E2E8F0"}` 
-            }}>
-            <span className="relative flex h-2 w-2">
-              {connectionState === 'connected' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background: "#16A34A" }} />}
-              <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: connectionState === 'connected' ? "#16A34A" : connectionState === 'connecting' ? "#D97706" : "#94A3B8" }} />
-            </span>
-            <Bluetooth size={11} style={{ color: connectionState === 'connected' ? "#16A34A" : connectionState === 'connecting' ? "#D97706" : "#64748B" }} />
-            <span style={{ color: connectionState === 'connected' ? "#16A34A" : connectionState === 'connecting' ? "#D97706" : "#64748B", fontFamily: MONO, fontWeight: 600, fontSize: "0.68rem" }}>
-              {connectionState === 'connected' ? "Terhubung ke Smart Key" : connectionState === 'connecting' ? "Menghubungkan..." : "Hubungkan BLE"}
-            </span>
-          </button>
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
+          {/* Dual BLE Hub Status Pills (Wearable RP2040 & Door Lock ESP32) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto py-0.5">
+            {/* 1. Status Wearable (Arduino RP2040) */}
+            <button 
+              type="button"
+              onClick={() => wearableState === 'connected' ? disconnectWearable() : connectWearable()}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all active:scale-95 cursor-pointer shrink-0" 
+              title="Status Koneksi Arduino Wearable (IMU & Biometrik Gait)"
+              style={{ 
+                background: wearableState === 'connected' ? "#F0FDF4" : wearableState === 'connecting' ? "#FEF3C7" : "#F1F5F9", 
+                border: `1px solid ${wearableState === 'connected' ? "#BBF7D0" : wearableState === 'connecting' ? "#FDE68A" : "#E2E8F0"}` 
+              }}>
+              <span className="relative flex h-1.5 w-1.5">
+                {wearableState === 'connected' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background: "#16A34A" }} />}
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: wearableState === 'connected' ? "#16A34A" : wearableState === 'connecting' ? "#D97706" : "#94A3B8" }} />
+              </span>
+              <Activity size={10} style={{ color: wearableState === 'connected' ? "#16A34A" : wearableState === 'connecting' ? "#D97706" : "#64748B" }} />
+              <span style={{ color: wearableState === 'connected' ? "#16A34A" : wearableState === 'connecting' ? "#D97706" : "#64748B", fontFamily: MONO, fontWeight: 700, fontSize: "0.62rem" }}>
+                {wearableState === 'connected' ? "Wearable" : wearableState === 'connecting' ? "RP2040..." : "Wearable: Off"}
+              </span>
+            </button>
+
+            {/* 2. Status Smart Door Lock (ESP32) */}
+            <button 
+              type="button"
+              onClick={() => doorLockState === 'connected' ? disconnectDoorLock() : connectDoorLock()}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all active:scale-95 cursor-pointer shrink-0" 
+              title="Status Koneksi ESP32 Smart Door Lock (Solenoid Kunci Pintu)"
+              style={{ 
+                background: doorLockState === 'connected' ? "#F0FDF4" : doorLockState === 'connecting' ? "#FEF3C7" : "#F1F5F9", 
+                border: `1px solid ${doorLockState === 'connected' ? "#BBF7D0" : doorLockState === 'connecting' ? "#FDE68A" : "#E2E8F0"}` 
+              }}>
+              <span className="relative flex h-1.5 w-1.5">
+                {doorLockState === 'connected' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-60" style={{ background: "#16A34A" }} />}
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5" style={{ background: doorLockState === 'connected' ? "#16A34A" : doorLockState === 'connecting' ? "#D97706" : "#94A3B8" }} />
+              </span>
+              <Lock size={10} style={{ color: doorLockState === 'connected' ? "#16A34A" : doorLockState === 'connecting' ? "#D97706" : "#64748B" }} />
+              <span style={{ color: doorLockState === 'connected' ? "#16A34A" : doorLockState === 'connecting' ? "#D97706" : "#64748B", fontFamily: MONO, fontWeight: 700, fontSize: "0.62rem" }}>
+                {doorLockState === 'connected' ? "Door Lock" : doorLockState === 'connecting' ? "ESP32..." : "Door: Off"}
+              </span>
+            </button>
+          </div>
           <div className="flex items-center gap-1.5">
             {[
               { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem" },
