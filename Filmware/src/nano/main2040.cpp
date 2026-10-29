@@ -487,6 +487,18 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                 sessionAsymSum = 0.0f;
             }
 
+            // Pada jendela ke-2 (fase steady-state dimulai), re-anchor akumulator agar jendela 1 (warm-up akselerasi) tidak mengotori rata-rata fisik steady
+            if (validWindowCounter == 2) {
+                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                    sessionFeaturesSum[d] = 0.0f;
+                }
+                sessionThighExcursionSum = 0.0f;
+                sessionCrestFactorSum = 0.0f;
+                sessionAxisDominanceSum = 0.0f;
+                sessionNormJerkSum = 0.0f;
+                sessionAsymSum = 0.0f;
+            }
+
             for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
                 sessionFeaturesSum[d] += currentFeatures[d];
             }
@@ -519,14 +531,15 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
 
                 // Pada jendela ke-5 (selesai), evaluasi gerbang kinematika fisik & penempatan saku
                 if (validWindowCounter >= TARGET_WINDOWS) {
+                    float steadyDiv = (validWindowCounter >= 2) ? (float)(validWindowCounter - 1) : 1.0f;
                     for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-                        avgFeatures[d] = sessionFeaturesSum[d] / (float)TARGET_WINDOWS;
+                        avgFeatures[d] = sessionFeaturesSum[d] / steadyDiv;
                     }
-                    avgThighExcursion = sessionThighExcursionSum / (float)TARGET_WINDOWS;
-                    avgCrestFactor = sessionCrestFactorSum / (float)TARGET_WINDOWS;
-                    avgAxisDominance = sessionAxisDominanceSum / (float)TARGET_WINDOWS;
-                    avgNormJerk = sessionNormJerkSum / (float)TARGET_WINDOWS;
-                    avgAsym = sessionAsymSum / (float)TARGET_WINDOWS;
+                    avgThighExcursion = sessionThighExcursionSum / steadyDiv;
+                    avgCrestFactor = sessionCrestFactorSum / steadyDiv;
+                    avgAxisDominance = sessionAxisDominanceSum / steadyDiv;
+                    avgNormJerk = sessionNormJerkSum / steadyDiv;
+                    avgAsym = sessionAsymSum / steadyDiv;
 
                     float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
                     deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
@@ -652,15 +665,16 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= SEPARATION_MARGIN_MIN);
                 }
 
-                // 2. Evaluasi Rata-Rata Kinematika Sesi Uji vs Model Golden Pemenang
+                // 2. Evaluasi Rata-Rata Kinematika Sesi Uji vs Model Golden Pemenang (Steady-State Windows 2 s.d. 5)
+                float steadyDiv = (validWindowCounter >= 2) ? (float)(validWindowCounter - 1) : 1.0f;
                 for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-                    avgFeatures[d] = sessionFeaturesSum[d] / (float)TARGET_WINDOWS;
+                    avgFeatures[d] = sessionFeaturesSum[d] / steadyDiv;
                 }
-                avgThighExcursion = sessionThighExcursionSum / (float)TARGET_WINDOWS;
-                avgCrestFactor = sessionCrestFactorSum / (float)TARGET_WINDOWS;
-                avgAxisDominance = sessionAxisDominanceSum / (float)TARGET_WINDOWS;
-                avgNormJerk = sessionNormJerkSum / (float)TARGET_WINDOWS;
-                avgAsym = sessionAsymSum / (float)TARGET_WINDOWS;
+                avgThighExcursion = sessionThighExcursionSum / steadyDiv;
+                avgCrestFactor = sessionCrestFactorSum / steadyDiv;
+                avgAxisDominance = sessionAxisDominanceSum / steadyDiv;
+                avgNormJerk = sessionNormJerkSum / steadyDiv;
+                avgAsym = sessionAsymSum / steadyDiv;
 
                 float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
                 deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);

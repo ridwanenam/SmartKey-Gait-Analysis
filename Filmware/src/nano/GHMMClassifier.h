@@ -21,15 +21,21 @@ private:
         }
     }
 
-    // Ambang batas bawah variansi (Variance Floor) absolut per dimensi fitur fisik
-    static inline float getVarianceFloor(uint8_t d) {
-        // Feature 0: Mean Gyro (~40-90 deg/s) -> var floor 49.0f (std ~7.0 deg/s toleransi tempo langkah)
-        // Feature 1: StdDev Gyro (~20-50 deg/s) -> var floor 36.0f (std ~6.0 deg/s)
-        // Feature 2: Cadence Regularity (~60-90%) -> var floor 36.0f (std ~6.0%)
-        // Feature 3: Step Period (~40-75 smp) -> var floor 36.0f (std ~6.0 smp = 60ms toleransi ritme)
-        // Feature 4: Heel-Strike Impact (~15-40 %g) -> var floor 25.0f (std ~5.0 %g)
-        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 49.0f, 36.0f, 36.0f, 36.0f, 25.0f };
-        return (d < NUM_FEATURES) ? MIN_ABS_VAR_FLOOR[d] : 1.0f;
+    // Ambang batas bawah (Floor) dan atas (Ceiling) variansi absolut per dimensi fitur fisik
+    // Floor menjamin elastisitas fisiologis alami tubuh manusia (mencegah overfitting / zero-variance singularity)
+    // Ceiling membatasi toleransi maksimum (mencegah model menyerap gaya jalan orang lain / underfitting)
+    static inline float clampVariance(uint8_t d, float rawVar) {
+        // Feature 0: Mean Gyro (~40-90 deg/s)    -> Floor 14.0f (std ~3.74 deg/s), Ceil 55.0f (std ~7.42 deg/s)
+        // Feature 1: StdDev Gyro (~20-50 deg/s)  -> Floor 10.0f (std ~3.16 deg/s), Ceil 45.0f (std ~6.71 deg/s)
+        // Feature 2: Cadence Regularity (~40-80%)-> Floor 20.0f (std ~4.47%),       Ceil 65.0f (std ~8.06%)
+        // Feature 3: Step Period (~40-75 smp)   -> Floor 12.0f (std ~3.46 smp),    Ceil 45.0f (std ~6.71 smp)
+        // Feature 4: Heel Impact (~15-45 %g)    -> Floor 15.0f (std ~3.87 %g),     Ceil 55.0f (std ~7.42 %g)
+        static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 14.0f, 10.0f, 20.0f, 12.0f, 15.0f };
+        static const float MAX_ABS_VAR_CEIL[NUM_FEATURES]  = { 55.0f, 45.0f, 65.0f, 45.0f, 55.0f };
+        if (d >= NUM_FEATURES) return 1.0f;
+        if (rawVar < MIN_ABS_VAR_FLOOR[d]) return MIN_ABS_VAR_FLOOR[d];
+        if (rawVar > MAX_ABS_VAR_CEIL[d])  return MAX_ABS_VAR_CEIL[d];
+        return rawVar;
     }
 
     // Perhitungan log-probabilitas emisi Gaussian Multivariat dengan asumsi matriks kovarians diagonal
@@ -38,8 +44,7 @@ private:
                              const float covars[NUM_FEATURES]) const {
         float logProb = 0.0f;
         for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-            float floorVal = getVarianceFloor(d);
-            float var = (covars[d] < floorVal) ? floorVal : covars[d];
+            float var = clampVariance(d, covars[d]);
             float diff = features[d] - means[d];
             float mahalanobisSq = (diff * diff) / var;
             
@@ -90,30 +95,29 @@ public:
             }
         }
 
-        // 3. Menghitung variansi dasar global dari seluruh jendela training dengan batas bawah variansi (Variance Floor)
-        float globalVar[NUM_FEATURES];
-        for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-            float globalMean = 0.0f;
-            for (uint8_t w = 0; w < TARGET_WINDOWS; ++w) {
-                globalMean += windowFeatures[w][d];
-            }
-            globalMean /= (float)TARGET_WINDOWS;
-            float sumVar = 0.0f;
-            for (uint8_t w = 0; w < TARGET_WINDOWS; ++w) {
-                float diff = windowFeatures[w][d] - globalMean;
-                sumVar += (diff * diff);
-            }
-            float v = sumVar / (float)(TARGET_WINDOWS > 1 ? (TARGET_WINDOWS - 1) : 1);
-            float floorVal = getVarianceFloor(d);
-            globalVar[d] = (v < floorVal) ? floorVal : v;
-        }
-
-        // 4. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state dengan batas bawah
-        // Tahap 1 Sanitasi: Lewati jendela transisi awal (Window 0 = start from standstill)
+        // Tahap 1 Sanitasi: Lewati jendela transisi awal (Window 0 = start dari kondisi diam)
         // Gunakan jendela langkah berjalan stabil (Windows 1 s.d. TARGET_WINDOWS - 1)
         uint8_t steadyStart = (TARGET_WINDOWS >= 4) ? 1 : 0;
         uint8_t steadyCount = TARGET_WINDOWS - steadyStart;
 
+        // 3. Menghitung variansi dasar global dari jendela training stabil dengan batas bawah (Floor) dan atas (Ceiling)
+        float globalVar[NUM_FEATURES];
+        for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+            float globalMean = 0.0f;
+            for (uint8_t w = steadyStart; w < TARGET_WINDOWS; ++w) {
+                globalMean += windowFeatures[w][d];
+            }
+            globalMean /= (float)steadyCount;
+            float sumVar = 0.0f;
+            for (uint8_t w = steadyStart; w < TARGET_WINDOWS; ++w) {
+                float diff = windowFeatures[w][d] - globalMean;
+                sumVar += (diff * diff);
+            }
+            float v = sumVar / (float)(steadyCount > 1 ? (steadyCount - 1) : 1);
+            globalVar[d] = clampVariance(d, v);
+        }
+
+        // 4. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state dengan batas bawah dan atas
         for (uint8_t s = 0; s < NUM_STATES; ++s) {
             uint8_t startWin = steadyStart + (s * steadyCount) / NUM_STATES;
             uint8_t endWin = steadyStart + ((s + 1) * steadyCount) / NUM_STATES;
@@ -135,8 +139,7 @@ public:
                     segSumVar += (diff * diff);
                 }
                 float calculatedVar = (cnt > 1) ? (segSumVar / (float)(cnt - 1)) : globalVar[d];
-                float floorVal = getVarianceFloor(d);
-                model.covars[s][d] = (calculatedVar < floorVal) ? floorVal : calculatedVar;
+                model.covars[s][d] = clampVariance(d, calculatedVar);
             }
         }
 
@@ -187,18 +190,27 @@ public:
     }
 
     // Menghitung skor Forward GHMM dengan Normalisasi Panjang Urutan (Average Log-Likelihood)
+    // Jendela 1 diperlakukan sebagai warm-up / start akselerasi dari kondisi diam.
+    // Mulai Jendela 2 s.d. 5 (steady-state gait), Forward chain di-anchor dan dievaluasi secara stabil.
     float evaluateWindow(const UserModel &model, const float features[NUM_FEATURES], uint8_t windowStep) {
         float newAlpha[NUM_STATES];
 
-        if (windowStep == 1) {
-            // Tahap Inisialisasi: alpha_1(j) = pi_j * b_j(O_1)
+        if (windowStep <= 1) {
+            // Tahap Warm-up (Jendela 1): Evaluasi inisialisasi emisi langkah awal dari kondisi diam
+            for (uint8_t j = 0; j < NUM_STATES; ++j) {
+                float logPi = (model.startProb[j] < EPSILON) ? logf(EPSILON) : logf(model.startProb[j]);
+                float logB = computeLogEmission(features, model.means[j], model.covars[j]);
+                newAlpha[j] = logPi + logB;
+            }
+        } else if (windowStep == 2) {
+            // Tahap Re-Anchor Steady-State (Jendela 2): Mulai rantai Forward murni dari langkah konstan
             for (uint8_t j = 0; j < NUM_STATES; ++j) {
                 float logPi = (model.startProb[j] < EPSILON) ? logf(EPSILON) : logf(model.startProb[j]);
                 float logB = computeLogEmission(features, model.means[j], model.covars[j]);
                 newAlpha[j] = logPi + logB;
             }
         } else {
-            // Tahap Induksi: alpha_t(j) = [sum_i alpha_{t-1}(i) * a_ij] * b_j(O_t)
+            // Tahap Induksi (Jendela 3 s.d. 5): alpha_t(j) = [sum_i alpha_{t-1}(i) * a_ij] * b_j(O_t)
             for (uint8_t j = 0; j < NUM_STATES; ++j) {
                 float logSum = -1e9f;
                 for (uint8_t i = 0; i < NUM_STATES; ++i) {
@@ -221,8 +233,14 @@ public:
             totalLogProb = logAdd(totalLogProb, alphaForward[s]);
         }
 
-        // Normalisasi Panjang Urutan (Length-Normalized Log-Likelihood)
-        float normalizedLogProb = totalLogProb / (float)(windowStep > 0 ? windowStep : 1);
+        // Normalisasi Panjang Urutan Steady-State
+        // Jendela 1: panjang 1 (umpan balik progres langsung ke UI)
+        // Jendela 2: panjang 1 (re-anchor steady step 1)
+        // Jendela 3: panjang 2
+        // Jendela 4: panjang 3
+        // Jendela 5: panjang 4 (evaluasi 4 jendela steady-state 2 s.d. 5)
+        uint8_t effStep = (windowStep <= 1) ? 1 : (windowStep - 1);
+        float normalizedLogProb = totalLogProb / (float)effStep;
 
         // Tautkan ambang batas secara solid ke Golden Baseline Registrasi Profil Pengguna
         // Tidak lagi ditarik melar ke bawah oleh sinyal anomali atau penyerang (Anti-Threshold Drift)

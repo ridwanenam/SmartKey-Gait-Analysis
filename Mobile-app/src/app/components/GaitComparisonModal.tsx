@@ -248,7 +248,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
         const ptsPerStep = 30;
         for (let i = 0; i < ptsPerStep; i++) {
-          const t = sIdx * 1.5 + (i * 1.5) / ptsPerStep;
+          const t = sIdx * 0.75 + (i * 0.75) / ptsPerStep;
           const phase = (i / ptsPerStep) * Math.PI * 2 * 1.8;
           const heelStrike = Math.pow(Math.sin(phase), 3) * Math.min(stepKurt, 3.5);
           const swing = Math.sin(phase * 2) * 0.35;
@@ -521,8 +521,8 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     const padBottom = 25;
     const plotW = width - padLeft - padRight;
 
-    // Durasi waktu 7.5 detik (5 Jendela x 1.5 detik)
-    const maxT = 7.5;
+    // Durasi waktu 4.5 detik (5 Jendela dengan 50% Sliding Overlap: 1.5s + 4 x 0.75s)
+    const maxT = 4.5;
     const viewSpan = maxT / zoom;
     const maxOffset = maxT - viewSpan;
     const actualOffset = Math.min(Math.max(panOffset * maxT, 0), Math.max(0, maxOffset));
@@ -584,9 +584,9 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.stroke();
       }
 
-      // Garis vertikal (per jendela 1.5 detik)
-      for (let sec = 0; sec <= maxT; sec += 1.5) {
-        if (sec >= tStart && sec <= tEnd) {
+      // Garis vertikal (per jendela bergeser 0.75 detik / 50% overlap)
+      for (let sec = 0; sec <= maxT + 0.05; sec += 0.75) {
+        if (sec >= tStart - 0.01 && sec <= tEnd + 0.01) {
           const x = padLeft + ((sec - tStart) / viewSpan) * plotW;
           ctx.beginPath();
           ctx.moveTo(x, yTop);
@@ -596,7 +596,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           ctx.fillStyle = "rgba(148, 163, 184, 0.6)";
           ctx.font = `9px ${MONO}`;
           ctx.textAlign = "center";
-          ctx.fillText(`${sec.toFixed(1)}s`, x, yTop + h + 14);
+          ctx.fillText(`${sec.toFixed(2)}s`, x, yTop + h + 14);
         }
       }
 
@@ -823,7 +823,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       ctx.fillStyle = "#94A3B8";
       ctx.font = "10px monospace";
       const tsStr = currentHead?.timestamp || new Date().toLocaleString("id-ID");
-      ctx.fillText(`Sesi: ${tsStr}  |  5 Jendela (7.5s)  |  RP2040 Dual-Core 133MHz`, 36, 75);
+      ctx.fillText(`Sesi: ${tsStr}  |  5 Jendela (4.5s 50% Overlap)  |  RP2040 Dual-Core 133MHz`, 36, 75);
 
       // Kanan Header: Base Slot Badge & Head Auth Badge & Skor CIR & Status
       drawRoundRect(670, 28, 175, 44, 8, "#083344", "#0E7490", 1);
@@ -1111,7 +1111,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       // Hitung skala adaptif dinamis dari seluruh titik Base dan Head (fleksibel mengikuti energi rotasi dan akselerasi)
       const baseWf = baseParsed.waveform;
       const headWf = headParsed.waveform;
-      const maxT = 7.5;
+      const maxT = 4.5;
       const allPoints = [...baseWf, ...headWf];
 
       // 1. Skala Adaptif Akselerasi (g)
@@ -1199,7 +1199,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       ctx.font = "bold 8px monospace";
       for (let wIdx = 0; wIdx < 5; wIdx++) {
         const labelX = ox + (wIdx / 5) * ow + ow / 10 - 24;
-        ctx.fillText(`JENDELA ${wIdx + 1} (${(wIdx * 1.5).toFixed(1)}s)`, labelX, oy + oh - 8);
+        ctx.fillText(`JENDELA ${wIdx + 1} (${(wIdx * 0.75).toFixed(2)}s)`, labelX, oy + oh - 8);
       }
 
       const drawWaveformCurve = (
@@ -2273,7 +2273,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                     className="flex-1 accent-teal-600 cursor-pointer h-1.5 bg-slate-300 rounded-lg"
                   />
                   <span style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.55rem", fontWeight: 700 }}>
-                    {(panOffset * 7.5).toFixed(1)}s
+                    {(panOffset * 4.5).toFixed(1)}s
                   </span>
                 </div>
               )}
