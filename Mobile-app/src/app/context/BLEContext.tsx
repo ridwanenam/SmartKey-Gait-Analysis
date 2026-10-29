@@ -413,35 +413,60 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       console.log("[BLE Wearable Door Notification]", text);
 
       if (text.startsWith("SCORES:")) {
-        const payload = text.substring(7);
-        const pairs = payload.split(";");
+        // Parsing paket diagnostik breakdown skor multiclass per-slot dari RP2040
+        // Format: "SCORES:0:83.2|1:45.3|2:21.0|3:18.5" (mendukung pemisah '|' maupun ';')
+        const raw = text.substring(7);
+        const delimiter = raw.includes("|") ? "|" : ";";
+        const parts = raw.split(delimiter);
         const list: Array<{ slot: number; score: number }> = [];
-        pairs.forEach((p) => {
-          const [sStr, vStr] = p.split("=");
-          if (sStr !== undefined && vStr !== undefined) {
-            const s = parseInt(sStr, 10);
-            const v = parseFloat(vStr);
-            if (!isNaN(s) && !isNaN(v)) list.push({ slot: s, score: v });
+        parts.forEach((p) => {
+          if (!p.trim()) return;
+          const kvDelim = p.includes(":") ? ":" : "=";
+          const [sStr, scStr] = p.split(kvDelim);
+          if (sStr !== undefined && scStr !== undefined) {
+            const slot = parseInt(sStr.trim(), 10);
+            const score = parseFloat(scStr.trim());
+            if (!isNaN(slot) && !isNaN(score)) {
+              list.push({ slot, score });
+            }
           }
         });
-        if (list.length > 0) latestAuthScoresRef.current = list;
+        if (list.length > 0) {
+          latestAuthScoresRef.current = list;
+          console.log("[AUTH BREAKDOWN]", list);
+        }
       } else if (text.startsWith("GATES:")) {
-        const payload = text.substring(6);
-        const pairs = payload.split(";");
-        const gData: any = { normJerk: 0, asym: 0, excursion: 0, crestFactor: 0, axisDominance: 0, deltaGyro: 0 };
-        pairs.forEach((p) => {
-          const [k, vStr] = p.split("=");
-          if (k && vStr !== undefined) {
-            const val = parseFloat(vStr);
-            if (k === "nj") gData.normJerk = val;
-            else if (k === "as") gData.asym = val;
-            else if (k === "ex") gData.excursion = val;
-            else if (k === "cf") gData.crestFactor = val;
-            else if (k === "ad") gData.axisDominance = val;
-            else if (k === "dG") gData.deltaGyro = val;
+        // Parsing paket diagnostik gerbang fisik (Tahap 0: Shadow Mode Diagnostics)
+        // Format: "GATES:j=0.215|a=1.45|ex=28.5|cf=2.35|ad=0.68|dG=12.3" (mendukung '|' maupun ';')
+        const raw = text.substring(6);
+        const delimiter = raw.includes("|") ? "|" : ";";
+        const parts = raw.split(delimiter);
+        const gData = {
+          normJerk: 0,
+          asym: 1.0,
+          excursion: 0,
+          crestFactor: 0,
+          axisDominance: 0,
+          deltaGyro: 0,
+        };
+        parts.forEach((p) => {
+          if (!p.trim()) return;
+          const [k, v] = p.split("=");
+          if (k && v !== undefined) {
+            const key = k.trim();
+            const val = parseFloat(v.trim());
+            if (!isNaN(val)) {
+              if (key === "j" || key === "nj") gData.normJerk = val;
+              else if (key === "a" || key === "as") gData.asym = val;
+              else if (key === "ex") gData.excursion = val;
+              else if (key === "cf") gData.crestFactor = val;
+              else if (key === "ad") gData.axisDominance = val;
+              else if (key === "dG") gData.deltaGyro = val;
+            }
           }
         });
         latestGatesRef.current = gData;
+        console.log("[DIAGNOSTIC GATES]", gData);
       } else if (text.startsWith("OPEN_DOOR")) {
         const parts = text.split(":");
         const name = parts.length > 1 ? parts.slice(1).join(":").trim() : "Owner";

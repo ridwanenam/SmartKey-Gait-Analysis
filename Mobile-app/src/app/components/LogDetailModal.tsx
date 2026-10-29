@@ -325,7 +325,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     } else {
       // Fallback untuk riwayat log lama: petakan ke profil yang saat ini ada
       const activeSlots: number[] = [];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 6; i++) {
         const prof = liveProfiles.find((p) => p.slot === i);
         const log = liveRegLogs.find((r) => r.slotUser.includes(`Slot ${i + 1}`));
         if (prof || log) activeSlots.push(i);
