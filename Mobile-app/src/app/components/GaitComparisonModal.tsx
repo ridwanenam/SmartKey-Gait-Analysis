@@ -544,31 +544,27 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     // Beri headroom 20% agar puncak gelombang tidak menyentuh batas atas/bawah
     const yLimitAcc = Math.max(1.5, Math.ceil(peakAcc * 1.2 * 10) / 10);
 
-    // 2. Skala Adaptif Giroskop (tidak kaku, fleksibel mengikuti energi rotasi)
-    let peakGyro = 4.0;
+    // 2. Skala Adaptif Giroskop Linear (°/s, fleksibel mengikuti kecepatan rotasi)
+    let peakGyroSpeed = 40.0;
     allVisiblePoints.forEach((p) => {
-      if (p.energy > peakGyro) peakGyro = p.energy;
+      const spd = Math.sqrt(Math.max(0, p.energy));
+      if (spd > peakGyroSpeed) peakGyroSpeed = spd;
     });
     // Beri headroom 25% agar gelombang rotasi tidak terbentur plafon atas
-    const rawGyroLimit = peakGyro * 1.25;
-    let yLimitGyro = 4.0;
-    if (rawGyroLimit < 6.0) {
-      yLimitGyro = 5.0;
-    } else if (rawGyroLimit < 50.0) {
-      yLimitGyro = Math.ceil(rawGyroLimit / 5) * 5;
-    } else if (rawGyroLimit < 200.0) {
-      yLimitGyro = Math.ceil(rawGyroLimit / 20) * 20;
-    } else if (rawGyroLimit < 1000.0) {
-      yLimitGyro = Math.ceil(rawGyroLimit / 100) * 100;
+    const rawGyroLimit = peakGyroSpeed * 1.25;
+    let yLimitGyro = 100.0;
+    if (rawGyroLimit <= 100.0) {
+      yLimitGyro = 100.0;
+    } else if (rawGyroLimit <= 200.0) {
+      yLimitGyro = Math.ceil(rawGyroLimit / 25) * 25;
+    } else if (rawGyroLimit <= 400.0) {
+      yLimitGyro = Math.ceil(rawGyroLimit / 50) * 50;
     } else {
-      yLimitGyro = Math.ceil(rawGyroLimit / 500) * 500;
+      yLimitGyro = Math.ceil(rawGyroLimit / 100) * 100;
     }
 
     const formatGyroLabel = (val: number) => {
-      if (val >= 1000) {
-        return val % 1000 === 0 ? `${val / 1000}k` : `${(val / 1000).toFixed(1)}k`;
-      }
-      return val.toFixed(val < 10 ? 1 : 0);
+      return `${Math.round(val)} °/s`;
     };
 
     const drawGridAndAxes = (yTop: number, h: number, labelPrefix: string) => {
@@ -608,12 +604,12 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       ctx.fillText(" 0.0g", padLeft - 6, yTop + h / 2 + 3);
       ctx.fillText(`-${yLimitAcc.toFixed(1)}g`, padLeft - 6, yTop + h - 3);
 
-      // Label sumbu Y kanan (Gyro adaptif)
+      // Label sumbu Y kanan (Gyro adaptif linear °/s)
       ctx.fillStyle = "#F59E0B";
       ctx.textAlign = "left";
       ctx.fillText(formatGyroLabel(yLimitGyro), width - padRight + 6, yTop + 10);
       ctx.fillText(formatGyroLabel(yLimitGyro / 2), width - padRight + 6, yTop + h / 2 + 3);
-      ctx.fillText("0.0", width - padRight + 6, yTop + h - 3);
+      ctx.fillText("0 °/s", width - padRight + 6, yTop + h - 3);
     };
 
     const drawCurve = (
@@ -664,8 +660,9 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
 
         visiblePts.forEach((p, idx) => {
           const x = padLeft + ((p.t - tStart) / viewSpan) * plotW;
-          // Normalisasi skala gyro adaptif: rentang 0 s.d. yLimitGyro
-          const normY = Math.max(0, p.energy) / yLimitGyro;
+          // Normalisasi skala gyro adaptif linear: rentang 0 s.d. yLimitGyro (°/s)
+          const spd = Math.sqrt(Math.max(0, p.energy));
+          const normY = Math.max(0, spd) / yLimitGyro;
           const y = yTop + h - Math.min(Math.max(normY, 0), 1) * h;
 
           if (idx === 0) ctx.moveTo(x, y);
@@ -1094,12 +1091,12 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       drawRoundRect(1024, 104, 110, 16, 3, "#2E1065", "#A855F7", 1);
       ctx.fillStyle = "#C084FC";
       ctx.font = "bold 8px monospace";
-      ctx.fillText("┅ Base Gyro (r/s)²", 1028, 115);
+      ctx.fillText("┅ Base Gyro (°/s)", 1028, 115);
 
       drawRoundRect(1140, 104, 110, 16, 3, "#500724", "#EC4899", 1);
       ctx.fillStyle = "#F472B6";
       ctx.font = "bold 8px monospace";
-      ctx.fillText("— Head Gyro (r/s)²", 1144, 115);
+      ctx.fillText("— Head Gyro (°/s)", 1144, 115);
 
       const ox = 512;
       const oy = 132;
@@ -1123,30 +1120,26 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       // Headroom 25% agar puncak gelombang tidak menyentuh plafon
       const yLimitAcc = Math.max(1.5, Math.ceil(peakAcc * 1.25 * 10) / 10);
 
-      // 2. Skala Adaptif Giroskop
-      let peakGyro = 4.0;
+      // 2. Skala Adaptif Giroskop Linear (°/s)
+      let peakGyroSpeed = 40.0;
       allPoints.forEach((p) => {
-        if (p.energy > peakGyro) peakGyro = p.energy;
+        const spd = Math.sqrt(Math.max(0, p.energy));
+        if (spd > peakGyroSpeed) peakGyroSpeed = spd;
       });
-      const rawGyroLimit = peakGyro * 1.25;
-      let yLimitGyro = 4.0;
-      if (rawGyroLimit < 6.0) {
-        yLimitGyro = 5.0;
-      } else if (rawGyroLimit < 50.0) {
-        yLimitGyro = Math.ceil(rawGyroLimit / 5) * 5;
-      } else if (rawGyroLimit < 200.0) {
-        yLimitGyro = Math.ceil(rawGyroLimit / 20) * 20;
-      } else if (rawGyroLimit < 1000.0) {
-        yLimitGyro = Math.ceil(rawGyroLimit / 100) * 100;
+      const rawGyroLimit = peakGyroSpeed * 1.25;
+      let yLimitGyro = 100.0;
+      if (rawGyroLimit <= 100.0) {
+        yLimitGyro = 100.0;
+      } else if (rawGyroLimit <= 200.0) {
+        yLimitGyro = Math.ceil(rawGyroLimit / 25) * 25;
+      } else if (rawGyroLimit <= 400.0) {
+        yLimitGyro = Math.ceil(rawGyroLimit / 50) * 50;
       } else {
-        yLimitGyro = Math.ceil(rawGyroLimit / 500) * 500;
+        yLimitGyro = Math.ceil(rawGyroLimit / 100) * 100;
       }
 
       const formatGyroLabel = (val: number) => {
-        if (val >= 1000) {
-          return val % 1000 === 0 ? `${val / 1000}k` : `${(val / 1000).toFixed(1)}k`;
-        }
-        return val.toFixed(val < 10 ? 1 : 0);
+        return `${Math.round(val)} °/s`;
       };
 
       for (let s = 1; s <= 4; s++) {
@@ -1182,7 +1175,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.fillStyle = g === 2 ? "#38BDF8" : "#0284C7";
         ctx.fillText(accLabel, ox - 38, gy + 3);
 
-        // Label Gyro Kanan Dinamis (0.0 di dasar bawah)
+        // Label Gyro Kanan Dinamis (0 °/s di dasar bawah)
         let gyroVal: number;
         if (g === 0) gyroVal = yLimitGyro;
         else if (g === 1) gyroVal = yLimitGyro * 0.75;
@@ -1190,7 +1183,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         else if (g === 3) gyroVal = yLimitGyro * 0.25;
         else gyroVal = 0;
 
-        const gyroLabel = g === 4 ? "0.0" : formatGyroLabel(gyroVal);
+        const gyroLabel = g === 4 ? "0 °/s" : formatGyroLabel(gyroVal);
         ctx.fillStyle = "#C084FC";
         ctx.fillText(gyroLabel, ox + ow + 8, gy + 3);
       }
@@ -1231,8 +1224,9 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
             const normY = (p.val + yLimitAcc) / (2 * yLimitAcc);
             py = oy + oh - Math.min(Math.max(normY, 0), 1) * oh;
           } else {
-            // Normalisasi rentang 0 s.d. yLimitGyro (0.0 di dasar bawah)
-            const normY = Math.max(0, p.energy) / yLimitGyro;
+            // Normalisasi rentang linear kecepatan sudut 0 s.d. yLimitGyro (°/s)
+            const spd = Math.sqrt(Math.max(0, p.energy));
+            const normY = Math.max(0, spd) / yLimitGyro;
             py = oy + oh - Math.min(Math.max(normY, 0), 1) * oh;
           }
 

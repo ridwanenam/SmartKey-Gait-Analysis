@@ -24,7 +24,10 @@ private:
     // Ambang batas bawah (Floor) dan atas (Ceiling) variansi absolut per dimensi fitur fisik
     // Floor menjamin elastisitas fisiologis alami tubuh manusia (mencegah overfitting / zero-variance singularity)
     // Ceiling membatasi toleransi maksimum (mencegah model menyerap gaya jalan orang lain / underfitting)
-    static inline float clampVariance(uint8_t d, float rawVar) {
+    // Fitur 0 (Rerata Gyro) memiliki plafon dinamis proporsional kecepatan (Weber-Fechner Law):
+    // Jalan biasa (<= 80 °/s): plafon variansi tetap ketat 55.0f (std ~7.42 °/s)
+    // Jalan cepat (> 80 °/s): plafon variansi melebar proporsional hingga 75.0f (std ~8.66 °/s, toleransi 2-sigma ±17 °/s)
+    static inline float clampVariance(uint8_t d, float rawVar, float meanGyro = 0.0f) {
         // Feature 0: Mean Gyro (~40-90 deg/s)    -> Floor 14.0f (std ~3.74 deg/s), Ceil 55.0f (std ~7.42 deg/s)
         // Feature 1: StdDev Gyro (~20-50 deg/s)  -> Floor 10.0f (std ~3.16 deg/s), Ceil 45.0f (std ~6.71 deg/s)
         // Feature 2: Cadence Regularity (~40-80%)-> Floor 20.0f (std ~4.47%),       Ceil 65.0f (std ~8.06%)
@@ -33,8 +36,19 @@ private:
         static const float MIN_ABS_VAR_FLOOR[NUM_FEATURES] = { 14.0f, 10.0f, 20.0f, 12.0f, 15.0f };
         static const float MAX_ABS_VAR_CEIL[NUM_FEATURES]  = { 55.0f, 45.0f, 65.0f, 45.0f, 55.0f };
         if (d >= NUM_FEATURES) return 1.0f;
-        if (rawVar < MIN_ABS_VAR_FLOOR[d]) return MIN_ABS_VAR_FLOOR[d];
-        if (rawVar > MAX_ABS_VAR_CEIL[d])  return MAX_ABS_VAR_CEIL[d];
+
+        float floorVal = MIN_ABS_VAR_FLOOR[d];
+        float ceilVal = MAX_ABS_VAR_CEIL[d];
+
+        // Plafon adaptif kecepatan untuk Fitur 0 (Rerata Gyro)
+        if (d == 0 && meanGyro > 80.0f) {
+            float excess = meanGyro - 80.0f;
+            ceilVal = 55.0f + 0.35f * excess;
+            if (ceilVal > 75.0f) ceilVal = 75.0f;
+        }
+
+        if (rawVar < floorVal) return floorVal;
+        if (rawVar > ceilVal)  return ceilVal;
         return rawVar;
     }
 
@@ -44,7 +58,7 @@ private:
                              const float covars[NUM_FEATURES]) const {
         float logProb = 0.0f;
         for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-            float var = clampVariance(d, covars[d]);
+            float var = clampVariance(d, covars[d], means[0]);
             float diff = features[d] - means[d];
             float mahalanobisSq = (diff * diff) / var;
             
@@ -102,6 +116,12 @@ public:
 
         // 3. Menghitung variansi dasar global dari jendela training stabil dengan batas bawah (Floor) dan atas (Ceiling)
         float globalVar[NUM_FEATURES];
+        float steadyGyroMean = 0.0f;
+        for (uint8_t w = steadyStart; w < TARGET_WINDOWS; ++w) {
+            steadyGyroMean += windowFeatures[w][0];
+        }
+        steadyGyroMean /= (float)steadyCount;
+
         for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
             float globalMean = 0.0f;
             for (uint8_t w = steadyStart; w < TARGET_WINDOWS; ++w) {
@@ -114,7 +134,7 @@ public:
                 sumVar += (diff * diff);
             }
             float v = sumVar / (float)(steadyCount > 1 ? (steadyCount - 1) : 1);
-            globalVar[d] = clampVariance(d, v);
+            globalVar[d] = clampVariance(d, v, steadyGyroMean);
         }
 
         // 4. Menghitung rata-rata (Means) dan variansi (Covars) per segmen state dengan batas bawah dan atas
@@ -139,7 +159,7 @@ public:
                     segSumVar += (diff * diff);
                 }
                 float calculatedVar = (cnt > 1) ? (segSumVar / (float)(cnt - 1)) : globalVar[d];
-                model.covars[s][d] = clampVariance(d, calculatedVar);
+                model.covars[s][d] = clampVariance(d, calculatedVar, model.means[s][0]);
             }
         }
 
@@ -247,9 +267,9 @@ public:
         float baseLL = (model.baselineLogProb <= -5.0f && model.baselineLogProb >= -60.0f) 
                        ? model.baselineLogProb : BASE_LOG_THRESHOLD;
         
-        // Ambang batas lolos (80.0% CIR) dipatok pada (baseLL - 5.5 log-unit)
-        // Memberikan toleransi variasi alami langkah kaki manusia (90% interval kepercayaan chi-square 5D)
-        currentAdaptiveThreshold = baseLL - 5.5f;
+        // Ambang batas lolos (80.0% CIR) dipatok pada (baseLL - 6.5 log-unit)
+        // Memberikan toleransi variasi alami langkah kaki manusia (95% interval kepercayaan chi-square 5D)
+        currentAdaptiveThreshold = baseLL - 6.5f;
 
         return normalizedLogProb;
     }
@@ -261,8 +281,8 @@ public:
         
         float baselineTh = (currentAdaptiveThreshold > -5.0f) ? BASE_LOG_THRESHOLD : currentAdaptiveThreshold;
 
-        // Rentang dari Ambang Kelulusan (80.0%) menuju Golden Baseline Registrasi (92.0%): 5.5 log-unit
-        const float SPAN_TO_BASE = 5.5f;
+        // Rentang dari Ambang Kelulusan (80.0%) menuju Golden Baseline Registrasi (92.0%): 6.5 log-unit
+        const float SPAN_TO_BASE = 6.5f;
 
         if (normLogProb >= baselineTh) {
             float delta = normLogProb - baselineTh;
