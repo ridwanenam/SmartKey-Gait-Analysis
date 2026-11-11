@@ -23,10 +23,7 @@ constexpr uint8_t LED_INDICATOR     = 2;    // Built-in LED ESP32 (indikator vis
 #define RELAY_ACTIVE_LEVEL          LOW
 #define RELAY_INACTIVE_LEVEL        HIGH
 
-// Proteksi Solenoid:
-// Solenoid 12V DC tidak boleh terus menerus dialiri listrik agar kumparannya tidak overheating/terbakar.
-// Sistem akan mengunci kembali secara otomatis setelah durasi ini (Auto-Relock).
-constexpr uint32_t UNLOCK_DURATION_MS = 5000; // 5 Detik
+// Mode Operasi: Pure Manual Lock (Tidak ada auto-relock timer 5 detik, penguncian murni manual)
 
 // ==============================================================================
 // 2. KONFIGURASI PROTOKOL BLUETOOTH LOW ENERGY (BLE)
@@ -44,7 +41,6 @@ bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
 bool isDoorUnlocked = false;
-uint32_t unlockTimestamp = 0;
 
 // ==============================================================================
 // 4. LOGIKA KONTROL SOLENOID FISIK
@@ -65,7 +61,6 @@ void unlockDoor(const char* reason = "COMMAND") {
     digitalWrite(RELAY_PIN, RELAY_ACTIVE_LEVEL);
     digitalWrite(LED_INDICATOR, HIGH);
     isDoorUnlocked = true;
-    unlockTimestamp = millis();
 
     if (pDoorChar) {
         char statusMsg[48];
@@ -76,7 +71,7 @@ void unlockDoor(const char* reason = "COMMAND") {
     Serial.print(F("[DOOR] >>> Solenoid Diberi Daya -> PINTU TERBUKA (UNLOCKED) ["));
     Serial.print(reason);
     Serial.println(F("] <<<"));
-    Serial.println(F("[SAFETY] Timer Auto-Relock berjalan: Pintu akan terkunci otomatis dlm 5 detik."));
+    Serial.println(F("[MODE] Penguncian Manual Aktif: Pintu tetap terbuka hingga tombol kunci/perintah CLOSE ditekan."));
 }
 
 void processCommand(const char* cmd) {
@@ -222,16 +217,7 @@ void setup() {
 // 7. LOOP PROGRAM UTAMA
 // ==============================================================================
 void loop() {
-    // 1. Auto-Relock Timer (Non-blocking):
-    // Melindungi koil solenoid 12V dari panas berlebih
-    if (isDoorUnlocked) {
-        if (millis() - unlockTimestamp >= UNLOCK_DURATION_MS) {
-            lockDoor();
-            Serial.println(F("[SAFETY] Waktu buka selesai (5 detik). Solenoid dinonaktifkan (Auto-Relocked)."));
-        }
-    }
-
-    // 2. Manajemen Koneksi Ulang BLE Advertising
+    // 1. Manajemen Koneksi Ulang BLE Advertising
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // Beri jeda agar stack Bluetooth stabil
         pServer->startAdvertising();
@@ -242,7 +228,7 @@ void loop() {
         oldDeviceConnected = deviceConnected;
     }
 
-    // 3. Serial Monitor Control (Memudahkan pengujian kabel & relay tanpa HP)
+    // 2. Serial Monitor Control (Memudahkan pengujian kabel & relay tanpa HP)
     if (Serial.available()) {
         String serialCmd = Serial.readStringUntil('\n');
         serialCmd.trim();
