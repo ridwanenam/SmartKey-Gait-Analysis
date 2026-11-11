@@ -17,9 +17,11 @@ constexpr uint8_t RELAY_PIN         = 15;   // GPIO15 (D15) terhubung ke pin IN 
 constexpr uint8_t LED_INDICATOR     = 2;    // Built-in LED ESP32 (indikator visual status pintu)
 
 // Level logika trigger relay:
-// Berdasarkan pengujian hardware pada ref.cpp: HIGH mengaktifkan relay/solenoid terbuka, LOW mengunci
-#define RELAY_ACTIVE_LEVEL          HIGH
-#define RELAY_INACTIVE_LEVEL        LOW
+// Sebagian besar modul relay (1-channel / optocoupler) bertipe ACTIVE-LOW (Low-Level Trigger):
+// - LOW  = Relay AKTIF (Lampu indikator kuning/merah MENYALA, Solenoid terbuka)
+// - HIGH = Relay MATI  (Lampu indikator MATI, Solenoid terkunci)
+#define RELAY_ACTIVE_LEVEL          LOW
+#define RELAY_INACTIVE_LEVEL        HIGH
 
 // Proteksi Solenoid:
 // Solenoid 12V DC tidak boleh terus menerus dialiri listrik agar kumparannya tidak overheating/terbakar.
@@ -54,9 +56,7 @@ void lockDoor() {
 
     if (pDoorChar) {
         pDoorChar->setValue("DOOR_LOCKED");
-        if (deviceConnected) {
-            pDoorChar->notify();
-        }
+        pDoorChar->notify();
     }
     Serial.println(F("[DOOR] >>> Solenoid Dinonaktifkan -> PINTU TERKUNCI (LOCKED) <<<"));
 }
@@ -71,9 +71,7 @@ void unlockDoor(const char* reason = "COMMAND") {
         char statusMsg[48];
         snprintf(statusMsg, sizeof(statusMsg), "DOOR_UNLOCKED:%s", reason);
         pDoorChar->setValue(statusMsg);
-        if (deviceConnected) {
-            pDoorChar->notify();
-        }
+        pDoorChar->notify();
     }
     Serial.print(F("[DOOR] >>> Solenoid Diberi Daya -> PINTU TERBUKA (UNLOCKED) ["));
     Serial.print(reason);
@@ -133,6 +131,11 @@ class DoorServerCallbacks : public BLEServerCallbacks {
         Serial.println(F("\n[BLE] Perangkat Client Terhubung!"));
     }
 
+    void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
+        deviceConnected = true;
+        Serial.println(F("\n[BLE] Perangkat Client Terhubung (GATT)!"));
+    }
+
     void onDisconnect(BLEServer* pServer) override {
         deviceConnected = false;
         Serial.println(F("[BLE] Perangkat Client Terputus."));
@@ -146,7 +149,7 @@ class DoorServerCallbacks : public BLEServerCallbacks {
 
 class DoorCharCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic* pCharacteristic) override {
-        std::string rxValue = pCharacteristic->getValue();
+        String rxValue = String(pCharacteristic->getValue().c_str());
         if (rxValue.length() > 0) {
             processCommand(rxValue.c_str());
         }

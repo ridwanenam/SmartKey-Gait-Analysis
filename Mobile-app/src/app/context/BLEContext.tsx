@@ -79,6 +79,8 @@ interface BLEContextType {
   connectWearable: () => Promise<void>;
   connectDoorLock: () => Promise<void>;
   autoConnect: () => Promise<void>;
+  performWearableConnection: (device: { deviceId: string; name?: string }) => Promise<void>;
+  performDoorLockConnection: (device: { deviceId: string; name?: string }) => Promise<void>;
   disconnect: () => void;
   disconnectWearable: () => void;
   disconnectDoorLock: () => void;
@@ -357,6 +359,12 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   // ── Penanganan Diskoneksi Mandiri ─────────────────────────────────────────
   const onWearableDisconnected = useCallback((devId: string) => {
     console.log("[BLE] Wearable disconnected:", devId);
+    // Verifikasi ketat: pastikan event diskoneksi ini berasal dari perangkat Wearable aktual
+    if (wearableDeviceIdRef.current && devId && devId !== wearableDeviceIdRef.current) {
+      console.log("[BLE] Mengabaikan event diskoneksi Wearable untuk device lain:", devId);
+      return;
+    }
+    wearableStateRef.current = "disconnected";
     setWearableState("disconnected");
     setWearableDeviceId(null);
     wearableDeviceIdRef.current = null;
@@ -373,6 +381,12 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
   const onDoorLockDisconnected = useCallback((devId: string) => {
     console.log("[BLE] DoorLock disconnected:", devId);
+    // Verifikasi ketat: pastikan event diskoneksi ini berasal dari perangkat Door Lock aktual
+    if (doorLockDeviceIdRef.current && devId && devId !== doorLockDeviceIdRef.current) {
+      console.log("[BLE] Mengabaikan event diskoneksi Door Lock untuk device lain:", devId);
+      return;
+    }
+    doorLockStateRef.current = "disconnected";
     setDoorLockState("disconnected");
     setDoorLockDeviceId(null);
     doorLockDeviceIdRef.current = null;
@@ -831,9 +845,21 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ── Koneksi Wearable ──────────────────────────────────────────────────────
+  // ── Koneksi Wearable (Independen & Anti-Tabrakan) ──────────────────────────
   const performWearableConnection = async (targetDevice: { deviceId: string; name?: string }) => {
+    // Failsafe: Tolak jika perangkat ini sebenarnya adalah Door Lock ESP32
+    if (targetDevice.name && targetDevice.name.includes("DoorLock")) {
+      console.warn("[BLE] Menolak koneksi Wearable: Terdeteksi sebagai DoorLock!", targetDevice.name);
+      return;
+    }
+    // Failsafe: Tolak jika deviceId ini sedang terhubung sebagai Door Lock
+    if (doorLockDeviceIdRef.current && targetDevice.deviceId === doorLockDeviceIdRef.current) {
+      console.warn("[BLE] Menolak koneksi Wearable: Device ID sama dengan Door Lock aktif:", targetDevice.deviceId);
+      return;
+    }
+
     addLog({ type: "system", status: "Info", message: `Menghubungkan ke Wearable (${targetDevice.name || "RP2040"})...` });
+    wearableStateRef.current = "connecting";
     setWearableState("connecting");
     await BleClient.connect(targetDevice.deviceId, (id) => onWearableDisconnected(id));
     await setupNotificationsForWearable(targetDevice.deviceId);
@@ -846,14 +872,27 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
     wearableDeviceIdRef.current = targetDevice.deviceId;
     setWearableDeviceId(targetDevice.deviceId);
+    wearableStateRef.current = "connected";
     setWearableState("connected");
     manualDisconnectWearableRef.current = false;
     addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Wearable (${targetDevice.name || "SmartKey_Wearable"})` });
   };
 
-  // ── Koneksi ESP32 Door Lock ───────────────────────────────────────────────
+  // ── Koneksi ESP32 Door Lock (Independen & Anti-Tabrakan) ────────────────────
   const performDoorLockConnection = async (targetDevice: { deviceId: string; name?: string }) => {
+    // Failsafe: Tolak jika perangkat ini sebenarnya adalah Wearable Arduino RP2040
+    if (targetDevice.name && (targetDevice.name.includes("Wearable") || !targetDevice.name.includes("DoorLock"))) {
+      console.warn("[BLE] Menolak koneksi DoorLock: Nama bukan DoorLock!", targetDevice.name);
+      return;
+    }
+    // Failsafe: Tolak jika deviceId ini sedang terhubung sebagai Wearable
+    if (wearableDeviceIdRef.current && targetDevice.deviceId === wearableDeviceIdRef.current) {
+      console.warn("[BLE] Menolak koneksi DoorLock: Device ID sama dengan Wearable aktif:", targetDevice.deviceId);
+      return;
+    }
+
     addLog({ type: "system", status: "Info", message: `Menghubungkan ke Solenoid Door Lock (${targetDevice.name || "ESP32"})...` });
+    doorLockStateRef.current = "connecting";
     setDoorLockState("connecting");
     await BleClient.connect(targetDevice.deviceId, (id) => onDoorLockDisconnected(id));
     await setupNotificationsForDoorLock(targetDevice.deviceId);
@@ -865,6 +904,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
     doorLockDeviceIdRef.current = targetDevice.deviceId;
     setDoorLockDeviceId(targetDevice.deviceId);
+    doorLockStateRef.current = "connected";
     setDoorLockState("connected");
     manualDisconnectDoorLockRef.current = false;
     addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Door Lock (${targetDevice.name || "SmartKey_DoorLock"})` });
@@ -878,8 +918,15 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       isAutoConnectingRef.current = true;
       await BleClient.initialize();
 
-      const lastWearableId = localStorage.getItem("smartkey_wearable_id") || localStorage.getItem("smartkey_last_device_id");
-      const lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
+      let lastWearableId = localStorage.getItem("smartkey_wearable_id") || localStorage.getItem("smartkey_last_device_id");
+      let lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
+
+      // Failsafe sanitasi: Jika ID DoorLock sama persis dengan Wearable (akibat salah pairing sebelumnya), bersihkan!
+      if (lastWearableId && lastDoorLockId && lastWearableId === lastDoorLockId) {
+        console.warn("[BLE AUTO] Membersihkan ID DoorLock karena bertabrakan dengan ID Wearable!");
+        localStorage.removeItem("smartkey_doorlock_id");
+        lastDoorLockId = null;
+      }
 
       // 1. Coba koneksi langsung ke Wearable jika belum terhubung
       if (lastWearableId && wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current) {
@@ -919,12 +966,14 @@ export function BLEProvider({ children }: { children: ReactNode }) {
             const dId = result.device.deviceId;
 
             if (devName.includes("DoorLock") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current) {
+              if (wearableDeviceIdRef.current && dId === wearableDeviceIdRef.current) return;
               try {
                 await performDoorLockConnection({ deviceId: dId, name: devName });
               } catch (connErr) {
                 console.error("[BLE AUTO] Gagal hubungkan door lock:", connErr);
               }
             } else if ((devName.includes("Wearable") || (!devName.includes("DoorLock") && devName.includes("SmartKey"))) && wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current) {
+              if (doorLockDeviceIdRef.current && dId === doorLockDeviceIdRef.current) return;
               try {
                 await performWearableConnection({ deviceId: dId, name: devName || "SmartKey_Wearable" });
               } catch (connErr) {
@@ -1003,51 +1052,21 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     };
   }, [autoConnect]);
 
-  // ── Dialog Pemilihan Perangkat BLE Manual ─────────────────────────────────
+  // ── Manual scan & connect tanpa native browser popup ───────────────────────
   const connectWearable = async () => {
     manualDisconnectWearableRef.current = false;
-    try {
-      setWearableState("connecting");
-      addLog({ type: "system", status: "Info", message: "Mencari Wearable BLE..." });
-      await BleClient.initialize();
-      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
-      await performWearableConnection(selected);
-    } catch (err) {
-      setWearableState("disconnected");
-      addLog({ type: "system", status: "Failed", message: `Koneksi Wearable gagal: ${(err as Error).message}` });
-    }
+    await autoConnect();
   };
 
   const connectDoorLock = async () => {
     manualDisconnectDoorLockRef.current = false;
-    try {
-      setDoorLockState("connecting");
-      addLog({ type: "system", status: "Info", message: "Mencari Smart Door Lock ESP32..." });
-      await BleClient.initialize();
-      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
-      await performDoorLockConnection(selected);
-    } catch (err) {
-      setDoorLockState("disconnected");
-      addLog({ type: "system", status: "Failed", message: `Koneksi Door Lock gagal: ${(err as Error).message}` });
-    }
+    await autoConnect();
   };
 
   const connect = async () => {
-    // Default action tombol connect: jika wearable belum terhubung, hubungkan wearable; atau sebaliknya
     manualDisconnectWearableRef.current = false;
     manualDisconnectDoorLockRef.current = false;
-    try {
-      await BleClient.initialize();
-      const selected = await BleClient.requestDevice({ services: [SMART_KEY_SERVICE_UUID] });
-      const name = selected.name || "";
-      if (name.includes("DoorLock")) {
-        await performDoorLockConnection(selected);
-      } else {
-        await performWearableConnection(selected);
-      }
-    } catch (err) {
-      addLog({ type: "system", status: "Failed", message: `Koneksi gagal: ${(err as Error).message}` });
-    }
+    await autoConnect();
   };
 
   const disconnectWearable = useCallback(async () => {
@@ -1216,6 +1235,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       connectWearable,
       connectDoorLock,
       autoConnect,
+      performWearableConnection,
+      performDoorLockConnection,
       disconnect,
       disconnectWearable,
       disconnectDoorLock,

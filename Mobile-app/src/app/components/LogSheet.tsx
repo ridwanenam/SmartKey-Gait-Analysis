@@ -250,6 +250,15 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
 
   // Ganti / Rename User Slot di Registrasi & Flash Memory RP2040
   const handleRenameSlotDirect = async (slotIdx: number, currentName: string) => {
+    if (connectionState !== "connected") {
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Perangkat Smart Key belum terhubung via Bluetooth!\n\nUntuk mengubah nama profil slot, sambungkan Bluetooth terlebih dahulu agar nama di memori Flash RP2040 ikut terupdate secara sinkron.",
+        type: "warning",
+      });
+      return;
+    }
+
     const newName = await showPrompt({
       title: `Ganti Nama Slot 0${slotIdx + 1}`,
       message: `Masukkan nama profil atau kondisi langkah untuk Slot 0${slotIdx + 1}:\nContoh: "ridwan biasa", "ridwan cepat", "ayah"`,

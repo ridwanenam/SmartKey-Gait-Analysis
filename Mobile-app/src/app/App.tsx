@@ -14,6 +14,7 @@ import { RegisterUserModal } from "./components/RegisterUserModal";
 import { SetPinModal } from "./components/SetPinModal";
 import { PinSettingsModal } from "./components/PinSettingsModal";
 import { GaitComparisonModal } from "./components/GaitComparisonModal";
+import { BLEScanModal } from "./components/BLEScanModal";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -79,6 +80,8 @@ function AppContent() {
   const [currentBypassPin, setCurrentBypassPin] = useState("123456");
   const [isDevMode, setIsDevMode] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [scanTargetType, setScanTargetType] = useState<"wearable" | "doorlock" | "all">("all");
 
   // Ambil PIN Bypass dan periksa ketersediaan user terdaftar dari SQLite
   useEffect(() => {
@@ -263,7 +266,14 @@ function AppContent() {
             {/* 1. Status Wearable (Arduino RP2040) */}
             <button 
               type="button"
-              onClick={() => wearableState === 'connected' ? disconnectWearable() : connectWearable()}
+              onClick={() => {
+                if (wearableState === 'connected') {
+                  disconnectWearable();
+                } else {
+                  setScanTargetType("wearable");
+                  setScanModalOpen(true);
+                }
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all active:scale-95 cursor-pointer shrink-0" 
               title="Status Koneksi Arduino Wearable (IMU & Biometrik Gait)"
               style={{ 
@@ -283,7 +293,14 @@ function AppContent() {
             {/* 2. Status Smart Door Lock (ESP32) */}
             <button 
               type="button"
-              onClick={() => doorLockState === 'connected' ? disconnectDoorLock() : connectDoorLock()}
+              onClick={() => {
+                if (doorLockState === 'connected') {
+                  disconnectDoorLock();
+                } else {
+                  setScanTargetType("doorlock");
+                  setScanModalOpen(true);
+                }
+              }}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all active:scale-95 cursor-pointer shrink-0" 
               title="Status Koneksi ESP32 Smart Door Lock (Solenoid Kunci Pintu)"
               style={{ 
@@ -698,6 +715,11 @@ function AppContent() {
       <GaitComparisonModal
         open={comparisonOpen}
         onClose={() => setComparisonOpen(false)}
+      />
+      <BLEScanModal
+        open={scanModalOpen}
+        onClose={() => setScanModalOpen(false)}
+        targetType={scanTargetType}
       />
     </div>
   );
