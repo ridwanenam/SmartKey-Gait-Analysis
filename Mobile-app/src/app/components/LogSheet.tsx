@@ -20,6 +20,7 @@ const SANS = "Inter, sans-serif";
 interface LogSheetProps {
   open: boolean;
   onClose: () => void;
+  isDevMode?: boolean;
 }
 
 function renderTimestamp(ts: string) {
@@ -38,7 +39,7 @@ function renderTimestamp(ts: string) {
   return <span className="text-[0.62rem] text-slate-600 font-mono">{ts}</span>;
 }
 
-export function LogSheet({ open, onClose }: LogSheetProps) {
+export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
   const {
     connectionState,
     sendCommand,
@@ -49,6 +50,13 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
     flashSyncVersion,
   } = useBLE();
   const [tab, setTab] = useState<TabType>("autentikasi");
+
+  // Jika Mode Pengembang nonaktif saat berada di tab sistem, kembalikan ke tab autentikasi
+  useEffect(() => {
+    if (!isDevMode && tab === "sistem") {
+      setTab("autentikasi");
+    }
+  }, [isDevMode, tab]);
 
   // State log dari SQLite
   const [authLogs, setAuthLogs] = useState<AuthLogRecord[]>([]);
@@ -393,24 +401,32 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                     { id: "autentikasi", label: "Log Autentikasi", color: "#2563EB" },
                     { id: "registrasi", label: "Log Registrasi", color: "#16A34A" },
                     { id: "sistem", label: "Log Sistem", color: "#7C3AED" },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => handleTabChange(t.id as TabType)}
-                      className="flex-1 py-2 px-3 rounded-lg text-center transition-all shrink-0 cursor-pointer"
-                      style={{
-                        background: tab === t.id ? "#FFFFFF" : "transparent",
-                        boxShadow: tab === t.id ? "0 1px 4px rgba(30,41,59,0.1)" : "none",
-                        color: tab === t.id ? t.color : "#94A3B8",
-                        fontFamily: MONO,
-                        fontSize: "0.62rem",
-                        fontWeight: tab === t.id ? 700 : 500,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
+                  ].map((t) => {
+                    const isSystemDisabled = t.id === "sistem" && !isDevMode;
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => !isSystemDisabled && handleTabChange(t.id as TabType)}
+                        disabled={isSystemDisabled}
+                        title={isSystemDisabled ? "Mode Pengembang Diperlukan untuk Melihat Log Sistem" : undefined}
+                        className={`flex-1 py-2 px-3 rounded-lg text-center transition-all shrink-0 ${
+                          isSystemDisabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                        }`}
+                        style={{
+                          background: tab === t.id ? "#FFFFFF" : "transparent",
+                          boxShadow: tab === t.id ? "0 1px 4px rgba(30,41,59,0.1)" : "none",
+                          color: isSystemDisabled ? "#94A3B8" : tab === t.id ? t.color : "#94A3B8",
+                          fontFamily: MONO,
+                          fontSize: "0.62rem",
+                          fontWeight: tab === t.id ? 700 : 500,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {t.label}
+                        {isSystemDisabled && " (Dev)"}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -578,8 +594,14 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                                   </span>
                                 ) : (
                                   <button
-                                    onClick={() => openDetail(r, "autentikasi")}
-                                    className="px-2.5 py-1 rounded-lg flex items-center gap-1 text-[0.58rem] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all active:scale-95 cursor-pointer"
+                                    onClick={() => isDevMode && openDetail(r, "autentikasi")}
+                                    disabled={!isDevMode}
+                                    title={!isDevMode ? "Mode Pengembang Diperlukan untuk Membuka Rincian Biometrik" : "Buka Rincian Biometrik"}
+                                    className={`px-2.5 py-1 rounded-lg flex items-center gap-1 text-[0.58rem] font-bold border transition-all ${
+                                      isDevMode
+                                        ? "text-blue-600 bg-blue-50 hover:bg-blue-100 border-blue-200 active:scale-95 cursor-pointer"
+                                        : "text-slate-400 bg-slate-100 border-slate-200 opacity-40 cursor-not-allowed"
+                                    }`}
                                   >
                                     <Eye size={11} />
                                     <span>Detail</span>
@@ -753,8 +775,14 @@ export function LogSheet({ open, onClose }: LogSheetProps) {
                               {isFilled && (
                                 <div className="mt-3.5 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
                                   <button
-                                    onClick={() => openDetail(logToView, "registrasi")}
-                                    className="flex-1 py-1.5 px-2.5 rounded-xl flex items-center justify-center gap-1 text-[0.62rem] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                                    onClick={() => isDevMode && openDetail(logToView, "registrasi")}
+                                    disabled={!isDevMode}
+                                    title={!isDevMode ? "Mode Pengembang Diperlukan untuk Membuka Rincian Biometrik" : "Buka Rincian Biometrik"}
+                                    className={`flex-1 py-1.5 px-2.5 rounded-xl flex items-center justify-center gap-1 text-[0.62rem] font-bold border transition-all shadow-2xs ${
+                                      isDevMode
+                                        ? "text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200 active:scale-95 cursor-pointer"
+                                        : "text-slate-400 bg-slate-100 border-slate-200 opacity-40 cursor-not-allowed"
+                                    }`}
                                     style={{ fontFamily: MONO }}
                                   >
                                     <Eye size={12} />

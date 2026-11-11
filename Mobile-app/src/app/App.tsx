@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Bluetooth, Info, Shield, History, X, CheckCircle2, XCircle,
-  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, BookOpen, Terminal, GitCompare,
+  AlertTriangle, Zap, Activity, HardDrive, Lock, Unlock, KeyRound, Terminal, GitCompare,
 } from "lucide-react";
 import { AuthScanPanel } from "./components/AuthScanPanel";
 import { RegPanel } from "./components/RegPanel";
@@ -155,21 +155,13 @@ function AppContent() {
     }
   };
 
-  // Mulai registrasi dengan proteksi PIN jika sudah pernah terdaftar
-  const handleStartRegistration = async () => {
+  // Mulai registrasi langsung buka dialog slot & nama tanpa meminta PIN
+  const handleStartRegistration = () => {
     if (connectionState !== "connected") {
       alert("Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai registrasi.");
       return;
     }
-    const isRegistered = await databaseService.isUserRegistered();
-    if (isRegistered) {
-      // Guard PIN 1x di awal untuk memastikan pemilik sah
-      setBypassPurpose("re_register");
-      setEmergencyOpen(true);
-    } else {
-      // Jika belum ada yang terdaftar, langsung buka dialog slot & nama
-      setRegisterModalOpen(true);
-    }
+    setRegisterModalOpen(true);
   };
 
   const startRegistrationSession = async (slot: number, name: string) => {
@@ -290,12 +282,28 @@ function AppContent() {
           </div>
           <div className="flex items-center gap-1.5">
             {[
-              { icon: BookOpen, action: () => setGuidelineOpen(true), color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE", label: "Panduan Sistem" },
-              { icon: KeyRound, action: () => setPinSettingsOpen(true), color: TEAL_DIM, bg: TEAL_BG, border: TEAL_BORDER, label: "Pengaturan PIN Bypass" },
-              { icon: History, action: () => setLogOpen(true), color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", label: "Riwayat Log" },
-              { icon: GitCompare, action: () => setComparisonOpen(true), color: "#0D9488", bg: "#F0FDFA", border: "#99F6E4", label: "Komparasi Gait (PR Diff)" },
-            ].map(({ icon: Icon, action, color, bg, border, label }) => (
-              <button key={label} onClick={action} title={label} className="w-8 h-8 rounded-xl flex items-center justify-center transition-all active:scale-95 cursor-pointer" style={{ background: bg, border: `1px solid ${border}` }}>
+              { icon: KeyRound, action: () => setPinSettingsOpen(true), color: TEAL_DIM, bg: TEAL_BG, border: TEAL_BORDER, label: "Pengaturan PIN Bypass", disabled: false },
+              { icon: History, action: () => setLogOpen(true), color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", label: "Riwayat Log", disabled: false },
+              {
+                icon: GitCompare,
+                action: () => setComparisonOpen(true),
+                color: isDevMode ? "#0D9488" : "#94A3B8",
+                bg: isDevMode ? "#F0FDFA" : "#F8FAFC",
+                border: isDevMode ? "#99F6E4" : "#E2E8F0",
+                label: isDevMode ? "Komparasi Gait (PR Diff)" : "Komparasi Gait (Perlu Mode Pengembang)",
+                disabled: !isDevMode,
+              },
+            ].map(({ icon: Icon, action, color, bg, border, label, disabled }) => (
+              <button
+                key={label}
+                onClick={disabled ? undefined : action}
+                disabled={disabled}
+                title={label}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                  disabled ? "opacity-40 cursor-not-allowed" : "active:scale-95 cursor-pointer"
+                }`}
+                style={{ background: bg, border: `1px solid ${border}` }}
+              >
                 <Icon size={15} style={{ color }} />
               </button>
             ))}
@@ -612,7 +620,7 @@ function AppContent() {
       </footer>
 
       {/* ── OVERLAYS ─────────────────────────────────── */}
-      <LogSheet open={logOpen} onClose={() => setLogOpen(false)} />
+      <LogSheet open={logOpen} onClose={() => setLogOpen(false)} isDevMode={isDevMode} />
       <GuidelineDialog open={guidelineOpen} onClose={() => setGuidelineOpen(false)} />
       <EmergencyBypassModal
         open={emergencyOpen}
