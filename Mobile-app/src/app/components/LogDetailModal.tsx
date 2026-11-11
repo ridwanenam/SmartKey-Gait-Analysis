@@ -28,6 +28,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { AuthLogRecord, RegLogRecord, databaseService, UserProfile } from "../services/databaseService";
+import { useDialog } from "../context/CustomDialogContext";
 import { ExportService } from "../services/exportService";
 
 interface LogDetailModalProps {
@@ -73,6 +74,7 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
   const authRec = isAuth ? (record as AuthLogRecord) : null;
   const regRec = !isAuth ? (record as RegLogRecord) : null;
 
+  const { showAlert, showPrompt, toast } = useDialog();
   const [currentAuthUser, setCurrentAuthUser] = useState<string>(authRec?.userId || "");
   useEffect(() => {
     if (authRec?.userId) {
@@ -83,10 +85,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
   const handleRenameAuthRecord = async () => {
     if (!authRec) return;
     const currentName = currentAuthUser || authRec.userId || "Unknown / Rejected";
-    const newName = window.prompt(
-      `Ganti label / User ID sesi ini:\n(Waktu: ${authRec.timestamp}, Skor: ${authRec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
-      currentName
-    );
+    const newName = await showPrompt({
+      title: "Ganti Label / User ID",
+      message: `Ubah label atau kondisi langkah untuk sesi ini:\n(Waktu: ${authRec.timestamp}, Skor: ${authRec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
+      defaultValue: currentName,
+      placeholder: "Contoh: jalan biasa",
+      confirmText: "Simpan Label",
+    });
     if (!newName || !newName.trim() || newName.trim() === currentName) return;
 
     const trimmed = newName.trim();
@@ -94,9 +99,14 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       await databaseService.updateAuthLogUserId(authRec.id, trimmed);
       setCurrentAuthUser(trimmed);
       authRec.userId = trimmed;
+      toast.success(`Label User ID diubah menjadi "${trimmed}"`);
     } catch (err) {
       console.error("Gagal update user id log:", err);
-      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+      showAlert({
+        title: "Gagal Mengubah Label",
+        message: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
     }
   };
 

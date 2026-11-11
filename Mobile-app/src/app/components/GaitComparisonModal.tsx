@@ -32,6 +32,7 @@ import {
 } from "../services/databaseService";
 import { ExportService } from "../services/exportService";
 import { useBLE } from "../context/BLEContext";
+import { useDialog } from "../context/CustomDialogContext";
 
 interface GaitComparisonModalProps {
   open: boolean;
@@ -68,6 +69,7 @@ const SANS = "Inter, sans-serif";
 
 export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps) {
   const { connectionState, syncFlashUsers, flashSyncVersion, addLog } = useBLE();
+  const { showAlert, showPrompt, toast } = useDialog();
 
   // State Selector Base vs Head
   const [baseSlots, setBaseSlots] = useState<Array<{ slot: number; name: string; record?: RegLogRecord }>>([]);
@@ -184,10 +186,13 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
   const handleRenameHeadUser = async () => {
     if (!currentHead) return;
     const currentName = currentHead.userId || "Unknown / Rejected";
-    const newName = window.prompt(
-      `Ganti label / User ID untuk sesi Head ini:\n(Waktu: ${currentHead.timestamp}, Skor: ${currentHead.score ?? "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
-      currentName
-    );
+    const newName = await showPrompt({
+      title: "Ganti Label / User ID Sesi",
+      message: `Ubah label atau kondisi langkah untuk sesi Head ini:\n(Waktu: ${currentHead.timestamp}, Skor: ${currentHead.score ?? "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
+      defaultValue: currentName,
+      placeholder: "Contoh: jalan biasa",
+      confirmText: "Simpan Label",
+    });
     if (!newName || !newName.trim() || newName.trim() === currentName) return;
 
     const trimmed = newName.trim();
@@ -201,9 +206,14 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         status: "Info",
         message: `Label User ID sesi ${currentHead.id.substring(0, 8)} diubah menjadi "${trimmed}".`,
       });
+      toast.success(`Label User ID sesi diubah menjadi "${trimmed}"`);
     } catch (err) {
       console.error("Gagal update user id sesi:", err);
-      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+      showAlert({
+        title: "Gagal Mengubah Label",
+        message: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
     }
   };
 
@@ -1424,7 +1434,11 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       await ExportService.exportImage(filename, base64DataUrl);
     } catch (err) {
       console.error("Gagal membuat ekspor gambar komparasi:", err);
-      alert(`Gagal membuat ekspor gambar: ${err instanceof Error ? err.message : String(err)}`);
+      showAlert({
+        title: "Gagal Mengekspor Gambar",
+        message: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
     } finally {
       setIsExportingImage(false);
     }

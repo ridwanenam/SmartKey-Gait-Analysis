@@ -901,12 +901,16 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // 3. Jika salah satu atau keduanya belum terhubung, jalankan scan latar belakang
+      // 3. Evaluasi apakah masih butuh scan latar belakang
       const needWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
-      const needDoorLock = doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+      const needDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
 
       if (needWearable || needDoorLock) {
         console.log("[BLE AUTO] Memulai background scan dual device...");
+        try {
+          await BleClient.stopLEScan();
+        } catch (_) {}
+
         await BleClient.requestLEScan(
           { services: [SMART_KEY_SERVICE_UUID] },
           async (result) => {
@@ -914,13 +918,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
             const devName = result.device.name || result.localName || "";
             const dId = result.device.deviceId;
 
-            if (devName.includes("DoorLock") && doorLockStateRef.current !== "connected") {
+            if (devName.includes("DoorLock") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current) {
               try {
                 await performDoorLockConnection({ deviceId: dId, name: devName });
               } catch (connErr) {
                 console.error("[BLE AUTO] Gagal hubungkan door lock:", connErr);
               }
-            } else if ((devName.includes("Wearable") || (!devName.includes("DoorLock") && devName.includes("SmartKey"))) && wearableStateRef.current !== "connected") {
+            } else if ((devName.includes("Wearable") || (!devName.includes("DoorLock") && devName.includes("SmartKey"))) && wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current) {
               try {
                 await performWearableConnection({ deviceId: dId, name: devName || "SmartKey_Wearable" });
               } catch (connErr) {
@@ -928,28 +932,59 @@ export function BLEProvider({ children }: { children: ReactNode }) {
               }
             }
 
-            // Jika keduanya sudah terhubung, hentikan scan lebih awal
-            if (wearableStateRef.current === "connected" && doorLockStateRef.current === "connected") {
+            // Jika semua perangkat yang dibutuhkan sudah terhubung, hentikan scan lebih awal
+            const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+            const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+            if (!stillNeedWearable && !stillNeedDoorLock) {
               try {
                 await BleClient.stopLEScan();
               } catch (_) {}
+              if (autoConnectTimerRef.current) {
+                clearTimeout(autoConnectTimerRef.current);
+                autoConnectTimerRef.current = null;
+              }
+              isAutoConnectingRef.current = false;
             }
           }
         );
 
-        // Scan dibatasi 6 detik
+        // Scan berjalan 5 detik per siklus
         setTimeout(async () => {
           try {
             await BleClient.stopLEScan();
           } catch (_) {}
           isAutoConnectingRef.current = false;
-        }, 6000);
+
+          // Jadwalkan scan berikutnya secara berkala jika Arduino atau Door Lock belum menyala/terhubung
+          const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+          const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+
+          if (stillNeedWearable || stillNeedDoorLock) {
+            if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+            autoConnectTimerRef.current = setTimeout(() => {
+              if (autoConnectRef.current) autoConnectRef.current();
+            }, 3000);
+          }
+        }, 5000);
       } else {
         isAutoConnectingRef.current = false;
       }
     } catch (err) {
       console.log("[BLE AUTO] Error auto connect:", err);
+      try {
+        await BleClient.stopLEScan();
+      } catch (_) {}
       isAutoConnectingRef.current = false;
+      const lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
+      const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+      const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+
+      if (stillNeedWearable || stillNeedDoorLock) {
+        if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+        autoConnectTimerRef.current = setTimeout(() => {
+          if (autoConnectRef.current) autoConnectRef.current();
+        }, 3500);
+      }
     }
   }, []);
 
@@ -1017,6 +1052,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
   const disconnectWearable = useCallback(async () => {
     manualDisconnectWearableRef.current = true;
+    if (autoConnectTimerRef.current) {
+      clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = null;
+    }
+    try {
+      await BleClient.stopLEScan();
+    } catch (_) {}
     if (wearableDeviceIdRef.current) {
       try {
         await BleClient.disconnect(wearableDeviceIdRef.current);
@@ -1032,6 +1074,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
 
   const disconnectDoorLock = useCallback(async () => {
     manualDisconnectDoorLockRef.current = true;
+    if (autoConnectTimerRef.current) {
+      clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = null;
+    }
+    try {
+      await BleClient.stopLEScan();
+    } catch (_) {}
     if (doorLockDeviceIdRef.current) {
       try {
         await BleClient.disconnect(doorLockDeviceIdRef.current);
@@ -1047,6 +1096,13 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   }, [addLog]);
 
   const disconnect = useCallback(async () => {
+    if (autoConnectTimerRef.current) {
+      clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = null;
+    }
+    try {
+      await BleClient.stopLEScan();
+    } catch (_) {}
     await disconnectWearable();
     await disconnectDoorLock();
   }, [disconnectWearable, disconnectDoorLock]);

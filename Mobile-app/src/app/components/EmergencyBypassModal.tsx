@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Delete, CheckCircle2, XCircle, Zap, Clock, RotateCcw } from "lucide-react";
 import { useBLE } from "../context/BLEContext";
+import { useDialog } from "../context/CustomDialogContext";
 import { databaseService, formatLogTimestamp } from "../services/databaseService";
 
 type BypassState = "input" | "verifying" | "success" | "failed";
@@ -37,6 +38,7 @@ export function EmergencyBypassModal({
   correctPin,
 }: EmergencyBypassModalProps) {
   const { sendCommand, addLog, connectionState } = useBLE();
+  const { showAlert } = useDialog();
   const [pin, setPin] = useState("");
   const [bypassState, setBypassState] = useState<BypassState>("input");
   const [shakeKey, setShakeKey] = useState(0);
@@ -84,7 +86,11 @@ export function EmergencyBypassModal({
                 status: "Warning",
                 message: "Bypass Dibatalkan: Smart Key belum terhubung Bluetooth (Solenoid fisik tidak aktif)",
               });
-              alert("Gagal membuka pintu:\n\nSmart Key belum terhubung via Bluetooth! Aktuator solenoid kunci pintu hanya dapat diaktifkan saat perangkat BLE terhubung.");
+              showAlert({
+                title: "Gagal Membuka Pintu",
+                message: "Smart Key belum terhubung via Bluetooth!\n\nAktuator solenoid kunci pintu hanya dapat diaktifkan saat perangkat BLE terhubung.",
+                type: "warning",
+              });
               return;
             }
 

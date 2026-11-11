@@ -11,6 +11,7 @@ import {
 import { LogDetailModal } from "./LogDetailModal";
 import { ExportService } from "../services/exportService";
 import { useBLE } from "../context/BLEContext";
+import { useDialog } from "../context/CustomDialogContext";
 
 type TabType = "autentikasi" | "registrasi" | "sistem";
 
@@ -49,6 +50,7 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
     formatFlashMemory,
     flashSyncVersion,
   } = useBLE();
+  const { showAlert, showConfirm, showPrompt, toast } = useDialog();
   const [tab, setTab] = useState<TabType>("autentikasi");
 
   // Jika Mode Pengembang nonaktif saat berada di tab sistem, kembalikan ke tab autentikasi
@@ -159,10 +161,13 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
   // Ganti / Rename User ID untuk riwayat log autentikasi
   const handleRenameAuthLog = async (rec: AuthLogRecord) => {
     const currentName = rec.userId || "Unknown / Rejected";
-    const newName = window.prompt(
-      `Ganti label / User ID sesi ini:\n(Waktu: ${rec.timestamp}, Skor: ${rec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "tangan ngayun", "saku jaket"`,
-      currentName
-    );
+    const newName = await showPrompt({
+      title: "Ganti Label / User ID",
+      message: `Ubah label atau kondisi langkah untuk sesi ini:\n(Waktu: ${rec.timestamp}, Skor: ${rec.score || "—"})\n\nContoh: "jalan biasa", "jalan agak cepat", "saku jaket"`,
+      defaultValue: currentName,
+      placeholder: "Contoh: jalan biasa",
+      confirmText: "Simpan Label",
+    });
     if (!newName || !newName.trim() || newName.trim() === currentName) return;
 
     const trimmed = newName.trim();
@@ -176,62 +181,82 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
         status: "Info",
         message: `Label User ID autentikasi diubah menjadi "${trimmed}".`,
       });
+      toast.success(`Label User ID diubah menjadi "${trimmed}"`);
     } catch (err) {
       console.error("Gagal update user id log:", err);
-      alert(`Gagal mengubah nama User ID: ${err instanceof Error ? err.message : String(err)}`);
+      showAlert({
+        title: "Gagal Mengubah Label",
+        message: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
     }
   };
 
   // Hapus single row slot registrasi
   const handleDeleteSingleSlot = async (rec: RegLogRecord) => {
     if (connectionState !== "connected") {
-      alert(
-        "Perhatian: Perangkat Smart Key belum terhubung via Bluetooth!\n\nUntuk menghapus profil registrasi, sambungkan Bluetooth terlebih dahulu agar data model biometrik di Flash memori RP2040 ikut terhapus secara sinkron."
-      );
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Perangkat Smart Key belum terhubung via Bluetooth!\n\nUntuk menghapus profil registrasi, sambungkan Bluetooth terlebih dahulu agar data model biometrik di Flash memori RP2040 ikut terhapus secara sinkron.",
+        type: "warning",
+      });
       return;
     }
 
     const match = rec.slotUser.match(/Slot\s+(\d+)/i);
     const slotIdx = match ? parseInt(match[1], 10) - 1 : -1;
 
-    if (
-      confirm(
-        `Apakah Anda yakin ingin menghapus "${rec.slotUser}"?\n\nProfil ini akan dihapus dari memori Flash RP2040 dan database aplikasi secara permanen.`
-      )
-    ) {
+    const confirmed = await showConfirm({
+      title: "Hapus Profil Registrasi",
+      message: `Apakah Anda yakin ingin menghapus "${rec.slotUser}"?\n\nProfil ini akan dihapus dari memori Flash RP2040 dan database aplikasi secara permanen.`,
+      confirmText: "Ya, Hapus",
+      danger: true,
+    });
+
+    if (confirmed) {
       if (slotIdx >= 0 && slotIdx < 6) {
         await deleteFlashUser(slotIdx);
       }
       await databaseService.deleteLogsByIds("registrasi", [rec.id]);
       await loadLogsFromSQLite();
+      toast.success("Profil registrasi berhasil dihapus");
     }
   };
 
   // Hapus langsung dari badge slot Flash
   const handleDeleteSlotDirect = async (slotIdx: number, userName: string) => {
     if (connectionState !== "connected") {
-      alert(
-        "Perhatian: Perangkat Smart Key belum terhubung via Bluetooth!\n\nSambungkan Bluetooth terlebih dahulu agar slot di Flash memori RP2040 dapat dihapus."
-      );
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Perangkat Smart Key belum terhubung via Bluetooth!\n\nSambungkan Bluetooth terlebih dahulu agar slot di Flash memori RP2040 dapat dihapus.",
+        type: "warning",
+      });
       return;
     }
 
-    if (
-      confirm(
-        `Hapus Slot ${slotIdx + 1} (${userName}) dari Flash memori RP2040 dan database?`
-      )
-    ) {
+    const confirmed = await showConfirm({
+      title: `Hapus Slot 0${slotIdx + 1}`,
+      message: `Hapus Slot 0${slotIdx + 1} (${userName}) dari Flash memori RP2040 dan database aplikasi secara permanen?`,
+      confirmText: "Ya, Hapus Slot",
+      danger: true,
+    });
+
+    if (confirmed) {
       await deleteFlashUser(slotIdx);
       await loadLogsFromSQLite();
+      toast.success(`Slot 0${slotIdx + 1} (${userName}) berhasil dihapus`);
     }
   };
 
   // Ganti / Rename User Slot di Registrasi & Flash Memory RP2040
   const handleRenameSlotDirect = async (slotIdx: number, currentName: string) => {
-    const newName = window.prompt(
-      `Ganti label / nama profil untuk Slot 0${slotIdx + 1}:\n\nContoh: "ridwan biasa", "ridwan cepat", "ayah"`,
-      currentName
-    );
+    const newName = await showPrompt({
+      title: `Ganti Nama Slot 0${slotIdx + 1}`,
+      message: `Masukkan nama profil atau kondisi langkah untuk Slot 0${slotIdx + 1}:\nContoh: "ridwan biasa", "ridwan cepat", "ayah"`,
+      defaultValue: currentName,
+      placeholder: "Nama profil pengguna...",
+      confirmText: "Simpan Nama",
+    });
     if (!newName || !newName.trim() || newName.trim() === currentName) return;
 
     const trimmed = newName.trim();
@@ -251,9 +276,14 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
         status: "Success",
         message: `Nama Slot 0${slotIdx + 1} diubah menjadi "${trimmed}".${connectionState === "connected" ? " Disinkronkan ke Flash RP2040." : " (Lokal)"}`,
       });
+      toast.success(`Nama Slot 0${slotIdx + 1} diubah menjadi "${trimmed}"`);
     } catch (err) {
       console.error("Gagal mengubah nama slot registrasi:", err);
-      alert(`Gagal mengubah nama slot: ${err instanceof Error ? err.message : String(err)}`);
+      showAlert({
+        title: "Gagal Mengubah Nama Slot",
+        message: err instanceof Error ? err.message : String(err),
+        type: "error",
+      });
     }
   };
 
@@ -264,15 +294,24 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
     // Proteksi khusus tab Registrasi: Wajib terkoneksi BLE agar Flash memory RP2040 ikut terhapus
     if (tab === "registrasi") {
       if (connectionState !== "connected") {
-        alert(
-          "Perhatian: Perangkat Smart Key belum terhubung via Bluetooth!\n\nUntuk menghapus profil registrasi, sambungkan Bluetooth terlebih dahulu agar data model biometrik di Flash memori perangkat ikut terhapus secara sinkron."
-        );
+        showAlert({
+          title: "Bluetooth Belum Terhubung",
+          message: "Perangkat Smart Key belum terhubung via Bluetooth!\n\nUntuk menghapus profil registrasi, sambungkan Bluetooth terlebih dahulu agar data model biometrik di Flash memori perangkat ikut terhapus secara sinkron.",
+          type: "warning",
+        });
         return;
       }
     }
 
     if (isSomeSelected) {
-      if (confirm(`Apakah Anda yakin ingin menghapus ${selectedIds.length} data terpilih dari ${tabName}?`)) {
+      const confirmed = await showConfirm({
+        title: `Hapus ${selectedIds.length} Data Terpilih`,
+        message: `Apakah Anda yakin ingin menghapus ${selectedIds.length} data terpilih dari ${tabName}? Tindakan ini tidak dapat dibatalkan.`,
+        confirmText: "Ya, Hapus Data",
+        danger: true,
+      });
+
+      if (confirmed) {
         if (tab === "registrasi") {
           // Sinkronkan penghapusan slot ke Flash RP2040
           const logsToDelete = regLogs.filter((r) => selectedIds.includes(r.id));
@@ -290,15 +329,19 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
         await databaseService.deleteLogsByIds(tab, selectedIds);
         setSelectedIds([]);
         await loadLogsFromSQLite();
+        toast.success(`${selectedIds.length} data dari ${tabName} berhasil dihapus`);
       }
     } else {
-      if (
-        confirm(
-          `Apakah Anda yakin ingin menghapus SELURUH ${tabName} dari database?${
-            tab === "registrasi" ? "\n\nPerhatian: Seluruh model biometrik di Flash memori RP2040 juga akan diformat bersih!" : ""
-          }`
-        )
-      ) {
+      const confirmed = await showConfirm({
+        title: `Hapus Seluruh ${tabName}`,
+        message: `Apakah Anda yakin ingin menghapus SELURUH ${tabName} dari database?${
+          tab === "registrasi" ? "\n\nPerhatian: Seluruh model biometrik di Flash memori RP2040 juga akan diformat bersih!" : ""
+        }`,
+        confirmText: "Ya, Hapus Semua",
+        danger: true,
+      });
+
+      if (confirmed) {
         if (tab === "registrasi") {
           await formatFlashMemory();
         }
@@ -306,6 +349,7 @@ export function LogSheet({ open, onClose, isDevMode = false }: LogSheetProps) {
         await databaseService.clearLogs(tab);
         setSelectedIds([]);
         await loadLogsFromSQLite();
+        toast.success(`Seluruh ${tabName} berhasil dibersihkan`);
       }
     }
   };

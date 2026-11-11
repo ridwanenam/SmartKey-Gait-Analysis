@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
+import { dialogService } from "../context/CustomDialogContext";
 
 export class ExportService {
   public static async exportCSV(filename: string, csvContent: string): Promise<boolean> {
@@ -24,11 +25,12 @@ export class ExportService {
               url: writeResult.uri,
               dialogTitle: "Simpan atau Bagikan CSV",
             });
+            dialogService.toast.success("File CSV siap dibagikan", { description: filename });
           } else {
-            alert(`File berhasil disimpan ke folder Dokumen: ${filename}`);
+            dialogService.toast.success("File CSV tersimpan di Dokumen", { description: filename });
           }
         } catch (_) {
-          alert(`File CSV berhasil disimpan ke penyimpanan lokal: ${filename}`);
+          dialogService.toast.success("File CSV tersimpan di penyimpanan lokal", { description: filename });
         }
 
         return true;
@@ -41,11 +43,14 @@ export class ExportService {
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+        dialogService.toast.success("File CSV berhasil diunduh", { description: filename });
         return true;
       }
     } catch (err) {
       console.error("Gagal mengekspor file CSV:", err);
-      alert(`Gagal menyimpan file: ${err instanceof Error ? err.message : String(err)}`);
+      dialogService.toast.error("Gagal menyimpan file CSV", {
+        description: err instanceof Error ? err.message : String(err),
+      });
       return false;
     }
   }
@@ -69,11 +74,12 @@ export class ExportService {
               url: writeResult.uri,
               dialogTitle: "Simpan atau Bagikan Gambar Komparasi",
             });
+            dialogService.toast.success("Gambar komparasi siap dibagikan", { description: filename });
           } else {
-            alert(`Gambar berhasil disimpan ke folder Dokumen: ${filename}`);
+            dialogService.toast.success("Gambar tersimpan di Dokumen", { description: filename });
           }
         } catch (_) {
-          alert(`Gambar berhasil disimpan ke penyimpanan lokal: ${filename}`);
+          dialogService.toast.success("Gambar tersimpan di penyimpanan lokal", { description: filename });
         }
         return true;
       } else {
@@ -81,11 +87,14 @@ export class ExportService {
         a.href = base64DataUrl;
         a.download = filename;
         a.click();
+        dialogService.toast.success("Gambar komparasi berhasil diunduh", { description: filename });
         return true;
       }
     } catch (err) {
       console.error("Gagal mengekspor file gambar:", err);
-      alert(`Gagal menyimpan gambar: ${err instanceof Error ? err.message : String(err)}`);
+      dialogService.toast.error("Gagal menyimpan gambar", {
+        description: err instanceof Error ? err.message : String(err),
+      });
       return false;
     }
   }

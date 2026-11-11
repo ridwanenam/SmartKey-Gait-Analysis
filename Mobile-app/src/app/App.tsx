@@ -18,6 +18,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { BLEProvider, useBLE } from "./context/BLEContext";
+import { CustomDialogProvider, useDialog } from "./context/CustomDialogContext";
 import { databaseService } from "./services/databaseService";
 
 type SessionState = "idle" | "scanning" | "success" | "failed";
@@ -32,7 +33,9 @@ const TEAL_BORDER = "#A7F3D0";
 export default function App() {
   return (
     <BLEProvider>
-      <AppContent />
+      <CustomDialogProvider>
+        <AppContent />
+      </CustomDialogProvider>
     </BLEProvider>
   );
 }
@@ -61,6 +64,7 @@ function AppContent() {
     verifiedUserName,
     flashSyncVersion,
   } = useBLE();
+  const { showAlert } = useDialog();
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [hasRegisteredUser, setHasRegisteredUser] = useState(false);
   const [mode, setMode] = useState<"auth" | "training" | null>(null);
@@ -99,7 +103,11 @@ function AppContent() {
   // Toggle buka/tutup pintu (Buka pintu diwajibkan menggunakan PIN Bypass & BLE aktif)
   const toggleDoor = async () => {
     if (doorLockState !== "connected" && connectionState !== "connected") {
-      alert("Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dikontrol saat terhubung ke perangkat BLE.");
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dikontrol saat terhubung ke perangkat BLE.",
+        type: "warning",
+      });
       return;
     }
     if (doorStatus === "locked") {
@@ -140,7 +148,11 @@ function AppContent() {
 
   const startSession = async (m: "auth" | "training") => {
     if (connectionState !== "connected") {
-      alert("Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai.");
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai.",
+        type: "warning",
+      });
       return;
     }
     const profiles = await databaseService.getUserProfiles();
@@ -158,7 +170,11 @@ function AppContent() {
   // Mulai registrasi langsung buka dialog slot & nama tanpa meminta PIN
   const handleStartRegistration = () => {
     if (connectionState !== "connected") {
-      alert("Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai registrasi.");
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Smart Key belum terhubung via Bluetooth!\n\nPastikan perangkat BLE aktif dan terhubung sebelum memulai registrasi.",
+        type: "warning",
+      });
       return;
     }
     setRegisterModalOpen(true);
@@ -167,7 +183,11 @@ function AppContent() {
   const startRegistrationSession = async (slot: number, name: string) => {
     setRegisterModalOpen(false);
     if (connectionState !== "connected") {
-      alert("Smart Key belum terhubung via Bluetooth!\n\nTidak dapat memulai sesi registrasi tanpa koneksi BLE.");
+      showAlert({
+        title: "Bluetooth Belum Terhubung",
+        message: "Smart Key belum terhubung via Bluetooth!\n\nTidak dapat memulai sesi registrasi tanpa koneksi BLE.",
+        type: "warning",
+      });
       return;
     }
     setActiveSession({ mode: "training", slot, name });
@@ -468,15 +488,19 @@ function AppContent() {
             <button
               onClick={() => {
                 if (connectionState !== "connected") {
-                  alert(
-                    "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu."
-                  );
+                  showAlert({
+                    title: "Bluetooth Belum Terhubung",
+                    message: "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu.",
+                    type: "warning",
+                  });
                   return;
                 }
                 if (!hasRegisteredUser) {
-                  alert(
-                    "Perhatian: Belum ada profil pengguna terdaftar di memori Flash RP2040!\n\nSilakan lakukan registrasi terlebih dahulu dengan mengetuk tombol 'Mulai Registrasi' di samping."
-                  );
+                  showAlert({
+                    title: "Belum Ada Pengguna",
+                    message: "Perhatian: Belum ada profil pengguna terdaftar di memori Flash RP2040!\n\nSilakan lakukan registrasi terlebih dahulu dengan mengetuk tombol 'Mulai Registrasi' di samping.",
+                    type: "warning",
+                  });
                   return;
                 }
                 if (!isScanning) startSession("auth");
@@ -522,9 +546,11 @@ function AppContent() {
             <button
               onClick={() => {
                 if (connectionState !== "connected") {
-                  alert(
-                    "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu."
-                  );
+                  showAlert({
+                    title: "Bluetooth Belum Terhubung",
+                    message: "Smart Key belum terhubung via Bluetooth!\n\nKetuk tombol status Bluetooth di pojok kiri atas untuk menghubungkan ke RP2040 terlebih dahulu.",
+                    type: "warning",
+                  });
                   return;
                 }
                 if (!isScanning) handleStartRegistration();
@@ -559,7 +585,11 @@ function AppContent() {
                 <button
                   onClick={() => {
                     if (connectionState !== "connected") {
-                      alert("Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dibuka saat terhubung ke perangkat BLE.");
+                      showAlert({
+                        title: "Bluetooth Belum Terhubung",
+                        message: "Smart Key belum terhubung via Bluetooth!\n\nKunci pintu solenoid fisik hanya dapat dibuka saat terhubung ke perangkat BLE.",
+                        type: "warning",
+                      });
                       return;
                     }
                     setBypassPurpose("unlock");
@@ -631,7 +661,11 @@ function AppContent() {
           if (connectionState === "connected") {
             setDoorStatus("unlocked");
           } else {
-            alert("Smart Key belum terhubung via Bluetooth! Pintu fisik tetap terkunci.");
+            showAlert({
+              title: "Bluetooth Belum Terhubung",
+              message: "Smart Key belum terhubung via Bluetooth! Pintu fisik tetap terkunci.",
+              type: "warning",
+            });
           }
         }}
         onVerified={() => {
