@@ -31,7 +31,7 @@ import {
   AuthLogRecord,
 } from "../services/databaseService";
 import { ExportService } from "../services/exportService";
-import { useBLE } from "../context/BLEContext";
+import { useBLE, KalmanComparisonData } from "../context/BLEContext";
 import { useDialog } from "../context/CustomDialogContext";
 
 interface GaitComparisonModalProps {
@@ -231,6 +231,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       axisDominance: number;
       deltaGyro: number;
     } | null = null;
+    let kalmanComparison: KalmanComparisonData | null = null;
 
     if (detailsStr) {
       try {
@@ -243,6 +244,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
           if (parsed.summary) summary = parsed.summary;
           if (Array.isArray(parsed.scoresBreakdown)) scoresBreakdown = parsed.scoresBreakdown;
           if (parsed.gates) gates = parsed.gates;
+          if (parsed.kalmanComparison) kalmanComparison = parsed.kalmanComparison;
         }
       } catch (_) {}
     }
@@ -282,7 +284,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       });
     }
 
-    return { steps, waveform, summary, scoresBreakdown, gates };
+    return { steps, waveform, summary, scoresBreakdown, gates, kalmanComparison };
   }, []);
 
   const baseParsed = useMemo(() => {
@@ -755,6 +757,20 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       csv += `${i + 1},${bStep?.mean ?? "—"},${hStep?.mean ?? "—"},${bStep?.variance ?? "—"},${hStep?.variance ?? "—"},${bStep?.stdDev ?? "—"},${hStep?.stdDev ?? "—"},${bStep?.skewness ?? "—"},${hStep?.skewness ?? "—"},${bStep?.kurtosis ?? "—"},${hStep?.kurtosis ?? "—"},${bStep?.zupt ?? "VALID"},${hStep?.zupt ?? "VALID"}\r\n`;
     }
 
+    if (headParsed.kalmanComparison) {
+      const kc = headParsed.kalmanComparison;
+      csv += "\r\n=== HASIL UJI KOMPARASI FILTER KALMAN (DUAL BUFFER 100 HZ · 1X JALAN) ===\r\n";
+      csv += "Metrik,Dengan_Kalman,Tanpa_Kalman_Raw,Keterangan\r\n";
+      csv += `Skor_CIR_Persen,${kc.kalmanConfidence?.toFixed(1) ?? "-"},${kc.rawConfidence?.toFixed(1) ?? "-"},Selisih=${((kc.kalmanConfidence ?? 0) - (kc.rawConfidence ?? 0)).toFixed(1)}%\r\n`;
+      csv += `Log_Likelihood,${kc.kalmanLogLikelihood?.toFixed(2) ?? "-"},${kc.rawLogLikelihood?.toFixed(2) ?? "-"},Forward GHMM\r\n`;
+      csv += `Mean_Gyro_dps,${kc.kalmanMean?.toFixed(1) ?? "-"},${kc.rawMean?.toFixed(1) ?? "-"},deg/s\r\n`;
+      csv += `Gyro_StdDev_dps,${kc.kalmanGyroStd?.toFixed(1) ?? "-"},${kc.rawGyroStd?.toFixed(1) ?? "-"},deg/s\r\n`;
+      csv += `StdDev_100Hz,${kc.filteredStd100?.toFixed(2) ?? "-"},${kc.rawStd100?.toFixed(2) ?? "-"},150 Sampel 100Hz\r\n`;
+      csv += `Reduksi_Jerk_Persen,${kc.jerkReductionPct?.toFixed(1) ?? "-"},-,Penghalusan Ripple\r\n`;
+      csv += `RMSE_dps,${kc.rmseDiff?.toFixed(2) ?? "-"},-,Deviasi RMS Raw vs Kalman\r\n`;
+      csv += `Latensi_Kalman_us,${kc.latencyUs?.toFixed(1) ?? "-"},-,Mikrodetik per Sampel 3-Axis\r\n`;
+    }
+
     await ExportService.exportCSV(filename, csv);
   };
 
@@ -763,8 +779,9 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     try {
       setIsExportingImage(true);
 
+      const kc = headParsed.kalmanComparison;
       const W = 1280;
-      const H = 860;
+      const H = kc ? 962 : 860;
       const scale = 2; // Retina 2x: 2560 x 1720 px
 
       const canvas = document.createElement("canvas");
@@ -1411,19 +1428,58 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.fillText(`Likelihood: ${hStep?.logLikelihood ?? "-2.4"}`, scX + 10, dBoxY + 55);
       }
 
-      // 5. Footer Bar Bawah (x: 20, y: 818, w: 1240, h: 28)
-      drawRoundRect(20, 818, 1240, 28, 6, "#0F172A", "#1E293B", 1);
+      // BOX 5 (Opsional saat Mode Uji Kalman aktif): PANEL KOMPARASI FILTER KALMAN (x: 20, y: 816, w: 1240, h: 98)
+      let footerY = 818;
+      if (kc) {
+        drawRoundRect(20, 816, 1240, 98, 12, "#131D31", "#D97706", 1.2);
+        drawRoundRect(34, 826, 265, 18, 5, "#451A03", "#F59E0B", 1);
+        ctx.fillStyle = "#FBBF24";
+        ctx.font = "bold 9px monospace";
+        ctx.fillText("UJI FILTER KALMAN · DUAL BUFFER 100 HZ", 42, 838);
+
+        ctx.fillStyle = "#94A3B8";
+        ctx.font = "9px monospace";
+        ctx.fillText("Pengujian A/B Paralel (1x Jalan yang Sama): Dengan Kalman vs Tanpa Kalman (Raw IMU)", 312, 838);
+
+        const kBoxes = [
+          { label: "SKOR CIR (KALMAN vs RAW)", val: `${kc.kalmanConfidence?.toFixed(1)}% vs ${kc.rawConfidence?.toFixed(1)}%`, sub: `Delta: ${((kc.kalmanConfidence ?? 0) - (kc.rawConfidence ?? 0)) >= 0 ? "+" : ""}${((kc.kalmanConfidence ?? 0) - (kc.rawConfidence ?? 0)).toFixed(1)}%`, color: "#4ADE80" },
+          { label: "LOG-LIKELIHOOD", val: `${kc.kalmanLogLikelihood?.toFixed(2)} vs ${kc.rawLogLikelihood?.toFixed(2)}`, sub: "Forward GHMM", color: "#38BDF8" },
+          { label: "MEAN GYRO (KALMAN vs RAW)", val: `${kc.kalmanMean?.toFixed(1)} vs ${kc.rawMean?.toFixed(1)} °/s`, sub: `StdDev: ${kc.kalmanGyroStd?.toFixed(1)} vs ${kc.rawGyroStd?.toFixed(1)} °/s`, color: "#F8FAFC" },
+          { label: "REDUKSI JERK (NOISE)", val: `${kc.jerkReductionPct?.toFixed(1)}%`, sub: `Std100: ${kc.filteredStd100?.toFixed(2)} vs ${kc.rawStd100?.toFixed(2)}`, color: "#FBBF24" },
+          { label: "RMSE & LATENSI KALMAN", val: `${kc.rmseDiff?.toFixed(2)} °/s | ${kc.latencyUs?.toFixed(1)} µs`, sub: "3-Axis Update RP2040", color: "#A78BFA" },
+        ];
+        const kBoxW = 232;
+        const kGap = 12;
+        kBoxes.forEach((kb, idx) => {
+          const bx = 34 + idx * (kBoxW + kGap);
+          const by = 852;
+          drawRoundRect(bx, by, kBoxW, 52, 6, "#0B132B", "#1E293B", 1);
+          ctx.fillStyle = "#64748B";
+          ctx.font = "bold 8px monospace";
+          ctx.fillText(kb.label, bx + 10, by + 14);
+          ctx.fillStyle = kb.color;
+          ctx.font = "bold 11px monospace";
+          ctx.fillText(kb.val, bx + 10, by + 31);
+          ctx.fillStyle = "#94A3B8";
+          ctx.font = "8px monospace";
+          ctx.fillText(kb.sub, bx + 10, by + 44);
+        });
+        footerY = 924;
+      }
+
+      // 5. Footer Bar Bawah
+      drawRoundRect(20, footerY, 1240, 28, 6, "#0F172A", "#1E293B", 1);
 
       ctx.fillStyle = "#64748B";
       ctx.font = "9px monospace";
       ctx.fillText(
         "SmartKey Biometric Gait System · RP2040 Dual-Core Cortex-M0+ 133MHz · IMU 6-DOF 100Hz · 5D Kinematics & GHMM Multiclass",
         32,
-        835
+        footerY + 17
       );
 
       const genTimeStr = new Date().toLocaleString("id-ID");
-      ctx.fillText(`Diekspor: ${genTimeStr} (Format PNG Bento Grid 1280x860)`, 870, 835);
+      ctx.fillText(`Diekspor: ${genTimeStr} (Format PNG Bento Grid ${W}x${H})`, 870, footerY + 17);
 
       // Ekspor Canvas ke Data URL PNG dan kirim via ExportService
       const base64DataUrl = canvas.toDataURL("image/png");
@@ -1878,6 +1934,59 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                     </div>
                   </div>
                 </div>
+
+                {/* Panel Uji Filter Kalman (jika sesi Head merekam Dual-Buffer Kalman) */}
+                {headParsed.kalmanComparison && (
+                  <div className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/50">
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-amber-200/70">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center bg-amber-100 text-amber-700">
+                          <Activity size={12} />
+                        </div>
+                        <div>
+                          <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.74rem" }}>
+                            Uji Komparasi Filter Kalman (Dual-Buffer 100 Hz · 1x Jalan)
+                          </p>
+                          <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.55rem" }}>
+                            Perbandingan paralel sinyal & skor GHMM: Dengan Kalman vs Tanpa Kalman (Raw IMU)
+                          </p>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[0.55rem] font-bold bg-amber-100 text-amber-800 border border-amber-300" style={{ fontFamily: MONO }}>
+                        Reduksi Jerk: {headParsed.kalmanComparison.jerkReductionPct?.toFixed(1)}%
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-2.5">
+                      <div className="p-2.5 rounded-lg bg-white border border-amber-200/70">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem" }}>CIR (KALMAN vs RAW)</p>
+                        <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 800, fontSize: "0.86rem", marginTop: 2 }}>
+                          {headParsed.kalmanComparison.kalmanConfidence?.toFixed(1)}% vs{" "}
+                          <span className="text-amber-700">{headParsed.kalmanComparison.rawConfidence?.toFixed(1)}%</span>
+                        </p>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white border border-amber-200/70">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem" }}>LOG-LIKELIHOOD</p>
+                        <p style={{ color: "#0F172A", fontFamily: MONO, fontWeight: 800, fontSize: "0.86rem", marginTop: 2 }}>
+                          {headParsed.kalmanComparison.kalmanLogLikelihood?.toFixed(2)} vs{" "}
+                          <span className="text-amber-700">{headParsed.kalmanComparison.rawLogLikelihood?.toFixed(2)}</span>
+                        </p>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white border border-amber-200/70">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem" }}>RMSE RAW vs KALMAN</p>
+                        <p style={{ color: "#0284C7", fontFamily: MONO, fontWeight: 800, fontSize: "0.86rem", marginTop: 2 }}>
+                          {headParsed.kalmanComparison.rmseDiff?.toFixed(2)} °/s
+                        </p>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white border border-amber-200/70">
+                        <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.52rem" }}>LATENSI KALMAN</p>
+                        <p style={{ color: "#059669", fontFamily: MONO, fontWeight: 800, fontSize: "0.86rem", marginTop: 2 }}>
+                          {headParsed.kalmanComparison.latencyUs?.toFixed(1)} µs/sampel
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 3 Kartu Komparasi Model GHMM & Ambang */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

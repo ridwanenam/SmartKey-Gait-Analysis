@@ -81,9 +81,11 @@ struct __attribute__((packed)) TelemetryData {
 // Disalurkan via BLE untuk Osiloskop Real-Time Fisik
 // ==========================================
 struct __attribute__((packed)) LiveSampleData {
-    float    liveVal;    // Akselerasi dinamis real-time (g)
-    float    energy;     // Energi kinematika sesaat
-    uint8_t  isMoving;   // 1 = Gerak aktif (ZUPT live), 0 = Diam/Statis
+    float    liveVal;       // Akselerasi dinamis real-time (g)
+    float    energy;        // Energi kinematika sesaat
+    uint8_t  isMoving;      // 1 = Gerak aktif (ZUPT live), 0 = Diam/Statis
+    float    rawGyroMag;    // Magnitudo giroskop mentah tanpa Kalman (deg/s)
+    float    kalmanGyroMag; // Magnitudo giroskop setelah Filter Kalman (deg/s)
 };
 
 #endif // CONFIG_H

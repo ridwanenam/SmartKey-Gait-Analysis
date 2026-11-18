@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { AuthLogRecord, RegLogRecord, databaseService, UserProfile } from "../services/databaseService";
 import { useDialog } from "../context/CustomDialogContext";
+import type { KalmanComparisonData } from "../context/BLEContext";
 import { ExportService } from "../services/exportService";
 
 interface LogDetailModalProps {
@@ -62,6 +63,8 @@ export interface WaveformPoint {
   val: number;     // Akselerasi linier dinamis (g)
   energy: number;  // Energi rotasi giroskop (rad/s)^2
   isMoving: boolean;
+  rawGyroMag?: number;    // Magnitudo gyro mentah tanpa Kalman (deg/s)
+  kalmanGyroMag?: number; // Magnitudo gyro setelah Filter Kalman (deg/s)
 }
 
 const MONO = "JetBrains Mono, monospace";
@@ -148,11 +151,12 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
   }, [open, isAuth, refreshProfiles]);
 
   // Parse detail JSON (mendukung format V1 array maupun V2 object terstruktur)
-  const { parsedDetails, parsedWaveform, sessionSummary, parsedScoresBreakdown } = useMemo(() => {
+  const { parsedDetails, parsedWaveform, sessionSummary, parsedScoresBreakdown, kalmanComparison } = useMemo(() => {
     let steps: StepDetailItem[] = [];
     let waveform: WaveformPoint[] = [];
     let summary: any = null;
     let scoresBreakdown: Array<{ slot: number; score: number }> = [];
+    let kalmanCmp: KalmanComparisonData | null = null;
 
     if (record?.details) {
       try {
@@ -161,11 +165,12 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
           // Format V1: array langsung langkah-langkah
           steps = parsed;
         } else if (parsed && typeof parsed === "object") {
-          // Format V2: objek lengkap dengan steps, waveform, dan summary
+          // Format V2: objek lengkap dengan steps, waveform, summary, dan uji Kalman
           if (Array.isArray(parsed.steps)) steps = parsed.steps;
           if (Array.isArray(parsed.waveform)) waveform = parsed.waveform;
           if (parsed.summary) summary = parsed.summary;
           if (Array.isArray(parsed.scoresBreakdown)) scoresBreakdown = parsed.scoresBreakdown;
+          if (parsed.kalmanComparison) kalmanCmp = parsed.kalmanComparison;
         }
       } catch (_) {
         steps = [];
@@ -173,7 +178,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       }
     }
 
-    return { parsedDetails: steps, parsedWaveform: waveform, sessionSummary: summary, parsedScoresBreakdown: scoresBreakdown };
+    return {
+      parsedDetails: steps,
+      parsedWaveform: waveform,
+      sessionSummary: summary,
+      parsedScoresBreakdown: scoresBreakdown,
+      kalmanComparison: kalmanCmp,
+    };
   }, [record]);
 
   // Gelombang efektif: gunakan parsedWaveform jika ada titik riil 20 Hz (format V2),
@@ -540,14 +551,13 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
     ctx.clip();
 
     if (visiblePoints.length > 1) {
-      // Channel 1: Energi Giroskop (Sumbu Y Kanan)
+      // Channel 1: Energi Giroskop (Sumbu Y Kanan) & Kurva Kalman jika tersedia
       if (showGyro) {
         ctx.beginPath();
         for (let i = 0; i < visiblePoints.length; i++) {
           const pt = visiblePoints[i];
           const xRatio = (pt.t - startTime) / visibleDuration;
           const x = padLeft + xRatio * plotW;
-          // Normalisasi skala gyro (0 s.d. 3.0 rad/s²)
           const normEnergy = Math.max(0.0, Math.min(1.0, pt.energy / gyroLimit));
           const y = padTop + plotH - (normEnergy * plotH);
 
@@ -559,6 +569,24 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
         ctx.setLineDash([3, 2]);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        if (visiblePoints.some((pt) => pt.kalmanGyroMag !== undefined)) {
+          ctx.beginPath();
+          for (let i = 0; i < visiblePoints.length; i++) {
+            const pt = visiblePoints[i];
+            const xRatio = (pt.t - startTime) / visibleDuration;
+            const x = padLeft + xRatio * plotW;
+            const kalEnergy = Math.pow(pt.kalmanGyroMag ?? 0, 2);
+            const normK = Math.max(0.0, Math.min(1.0, kalEnergy / gyroLimit));
+            const y = padTop + plotH - (normK * plotH);
+
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.9)";
+          ctx.lineWidth = 1.7;
+          ctx.stroke();
+        }
       }
 
       // Channel 2: Akselerasi Linier Dinamis (Sumbu Y Kiri)
@@ -705,14 +733,29 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
       csv += "\r\n";
     }
 
+    if (kalmanComparison) {
+      csv += "=== HASIL UJI KOMPARASI FILTER KALMAN (DUAL BUFFER 100 HZ · 1X JALAN) ===\r\n";
+      csv += "Metrik,Dengan_Kalman,Tanpa_Kalman_Raw,Keterangan\r\n";
+      csv += `Skor_CIR_Persen,${kalmanComparison.kalmanConfidence?.toFixed(1) ?? "-"},${kalmanComparison.rawConfidence?.toFixed(1) ?? "-"},Selisih=${((kalmanComparison.kalmanConfidence ?? 0) - (kalmanComparison.rawConfidence ?? 0)).toFixed(1)}%\r\n`;
+      csv += `Log_Likelihood,${kalmanComparison.kalmanLogLikelihood?.toFixed(2) ?? "-"},${kalmanComparison.rawLogLikelihood?.toFixed(2) ?? "-"},Length-Normalized Forward GHMM\r\n`;
+      csv += `Mean_Gyro_dps,${kalmanComparison.kalmanMean?.toFixed(1) ?? "-"},${kalmanComparison.rawMean?.toFixed(1) ?? "-"},Rerata Kecepatan Sudut\r\n`;
+      csv += `Gyro_StdDev_dps,${kalmanComparison.kalmanGyroStd?.toFixed(1) ?? "-"},${kalmanComparison.rawGyroStd?.toFixed(1) ?? "-"},Simpangan Baku Jendela\r\n`;
+      csv += `StdDev_Amplitudo_100Hz,${kalmanComparison.filteredStd100?.toFixed(2) ?? "-"},${kalmanComparison.rawStd100?.toFixed(2) ?? "-"},150 Sampel @ 100Hz\r\n`;
+      csv += `Reduksi_Jerk_Noise_Persen,${kalmanComparison.jerkReductionPct?.toFixed(1) ?? "-"},-,Pengurangan Ripple Frekuensi Tinggi\r\n`;
+      csv += `RMSE_Raw_vs_Kalman_dps,${kalmanComparison.rmseDiff?.toFixed(2) ?? "-"},-,Deviasi RMS Sinyal Filter\r\n`;
+      csv += `Latensi_Kalman_us,${kalmanComparison.latencyUs?.toFixed(1) ?? "-"},-,Waktu Komputasi 3-Sumbu per Sampel\r\n\r\n`;
+    }
+
     const exportWaveform = parsedWaveform.length > 0 ? parsedWaveform : effectiveWaveform;
     if (exportWaveform.length > 0) {
       csv += parsedWaveform.length > 0
         ? "=== TITIK SAMPEL GELOMBANG FISIK NYATA (20 HZ LIVE IMU) ===\r\n"
         : "=== TITIK SAMPEL GELOMBANG REKONSTRUKSI VEKTOR FITUR 5D (20 HZ) ===\r\n";
-      csv += "Waktu_Detik,Akselerasi_Dinamis_g,Energi_Rotasi_Gyro_rad_s2,Fase_Gerak_ZUPT\r\n";
+      csv += "Waktu_Detik,Akselerasi_Dinamis_g,Energi_Rotasi_Gyro_rad_s2,Raw_Gyro_Mag_dps,Kalman_Gyro_Mag_dps,Fase_Gerak_ZUPT\r\n";
       exportWaveform.forEach((p) => {
-        csv += `${p.t},${p.val},${p.energy},${p.isMoving ? "MELANGKAH" : "DIAM"}\r\n`;
+        const rawG = p.rawGyroMag !== undefined ? p.rawGyroMag : Math.sqrt(Math.max(0, p.energy)).toFixed(2);
+        const kalG = p.kalmanGyroMag !== undefined ? p.kalmanGyroMag : rawG;
+        csv += `${p.t},${p.val},${p.energy},${rawG},${kalG},${p.isMoving ? "MELANGKAH" : "DIAM"}\r\n`;
       });
     }
 
@@ -1187,6 +1230,72 @@ export function LogDetailModal({ open, onClose, record, type }: LogDetailModalPr
                         )}
                       </AnimatePresence>
                     </div>
+
+                    {/* KARTU KOMPARASI FILTER KALMAN (JIKA SESI MEREKAM DUAL-BUFFER KALMAN) */}
+                    {kalmanComparison && (
+                      <div className="mt-3 p-3 rounded-xl border border-amber-200 bg-amber-50/40">
+                        <div className="flex items-center justify-between gap-2 mb-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <Activity size={14} className="text-amber-600" />
+                            <p style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.76rem" }}>
+                              Hasil Uji Filter Kalman (Dual-Buffer 100 Hz · 1x Jalan)
+                            </p>
+                          </div>
+                          <span
+                            className="px-2 py-0.5 rounded text-[0.54rem] font-bold bg-amber-100 text-amber-800 border border-amber-300"
+                            style={{ fontFamily: MONO }}
+                          >
+                            REDUKSI JERK: {kalmanComparison.jerkReductionPct?.toFixed(1) ?? "—"}%
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+                          <div className="p-2 bg-white rounded-lg border border-amber-200/70">
+                            <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem" }}>SKOR CIR (KALMAN vs RAW)</p>
+                            <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.76rem", fontWeight: 800 }}>
+                              {kalmanComparison.kalmanConfidence?.toFixed(1)}%{" "}
+                              <span className="text-slate-400 font-normal">vs</span>{" "}
+                              <span className="text-amber-700">{kalmanComparison.rawConfidence?.toFixed(1)}%</span>
+                            </p>
+                          </div>
+                          <div className="p-2 bg-white rounded-lg border border-amber-200/70">
+                            <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem" }}>LOG-LIKELIHOOD</p>
+                            <p style={{ color: "#0F172A", fontFamily: MONO, fontSize: "0.76rem", fontWeight: 800 }}>
+                              {kalmanComparison.kalmanLogLikelihood?.toFixed(2)}{" "}
+                              <span className="text-slate-400 font-normal">vs</span>{" "}
+                              <span className="text-amber-700">{kalmanComparison.rawLogLikelihood?.toFixed(2)}</span>
+                            </p>
+                          </div>
+                          <div className="p-2 bg-white rounded-lg border border-amber-200/70">
+                            <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem" }}>RMSE RAW vs KALMAN</p>
+                            <p style={{ color: "#0284C7", fontFamily: MONO, fontSize: "0.76rem", fontWeight: 800 }}>
+                              {kalmanComparison.rmseDiff?.toFixed(2) ?? "—"} °/s
+                            </p>
+                          </div>
+                          <div className="p-2 bg-white rounded-lg border border-amber-200/70">
+                            <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.5rem" }}>LATENSI KALMAN (3-AXIS)</p>
+                            <p style={{ color: "#059669", fontFamily: MONO, fontSize: "0.76rem", fontWeight: 800 }}>
+                              {kalmanComparison.latencyUs?.toFixed(1) ?? "—"} µs/sampel
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[0.6rem]" style={{ fontFamily: MONO }}>
+                          <div className="px-2.5 py-1.5 bg-white rounded border border-slate-200 text-slate-700">
+                            Mean Gyro: <strong>{kalmanComparison.kalmanMean?.toFixed(1)}</strong> vs{" "}
+                            <span className="text-amber-700">{kalmanComparison.rawMean?.toFixed(1)} °/s</span>
+                          </div>
+                          <div className="px-2.5 py-1.5 bg-white rounded border border-slate-200 text-slate-700">
+                            StdDev Fitur: <strong>{kalmanComparison.kalmanGyroStd?.toFixed(1)}</strong> vs{" "}
+                            <span className="text-amber-700">{kalmanComparison.rawGyroStd?.toFixed(1)} °/s</span>
+                          </div>
+                          <div className="px-2.5 py-1.5 bg-white rounded border border-slate-200 text-slate-700 col-span-2 sm:col-span-1">
+                            StdDev 100Hz: <strong>{kalmanComparison.filteredStd100?.toFixed(2)}</strong> vs{" "}
+                            <span className="text-amber-700">{kalmanComparison.rawStd100?.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

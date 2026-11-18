@@ -10,9 +10,11 @@
 // Objek Subsistem Perangkat Lunak
 FeatureExtraction featureExtractor;
 GHMMClassifier   ghmm[MAX_USERS];
+GHMMClassifier   rawGhmm[MAX_USERS]; // Jalur bayangan Tanpa Kalman untuk mode komparasi 1x jalan
 BLEHandler       ble;
 
 // Variabel Status & Konfigurasi Runtime
+bool kalmanTestMode = false; // Default OFF (mode normal); ON saat toggle Uji Kalman di Dev Mode
 SystemState currentState = STATE_IDLE;
 UserModel activeUsers[MAX_USERS];
 uint8_t currentSlotTarget = 0;
@@ -75,12 +77,16 @@ void loop() {
     // 0. Update Heartbeat Watchdog
     g_lastLoopHeartbeat = millis();
 
-    // 1. Polling Event Komunikasi BLE
-    ble.poll();
-    handleIncomingCommands();
+    // 1. Polling Event Komunikasi BLE (Throttling 2 ms non-blocking untuk melindungi bus SPI Nina-W102 di semua state)
+    unsigned long currentMillis = millis();
+    static unsigned long lastBlePollTime = 0;
+    if (currentMillis - lastBlePollTime >= 2) {
+        lastBlePollTime = currentMillis;
+        ble.poll();
+        handleIncomingCommands();
+    }
 
     // 2. Scheduler Pengambilan Data IMU pada 100 Hz (10 ms)
-    unsigned long currentMillis = millis();
     if (currentMillis - previousSampleTime >= IMU_SAMPLE_INTERVAL_MS) {
         previousSampleTime = currentMillis;
 
@@ -95,34 +101,7 @@ void loop() {
             IMU.readGyroscope(gx, gy, gz);
         }
 
-        // 3. Streaming Gelombang Sensor Fisik Nyata (20 Hz / tiap 50 ms)
-        static unsigned long lastLiveSampleTime = 0;
-        if (currentMillis - lastLiveSampleTime >= 50) {
-            lastLiveSampleTime = currentMillis;
-            if (ble.isConnected() && (currentState == STATE_AUTHENTICATING || currentState == STATE_TRAINING)) {
-                // Hitung magnitudo akselerasi dan hilangkan komponen gravitasi bumi 1.0g
-                float accMag = sqrtf(ax * ax + ay * ay + az * az);
-                float dynAcc = accMag - 1.0f; // 0.0g saat diam
-
-                // Energi rotasi giroskop
-                float gyroEnergy = (gx * gx + gy * gy + gz * gz);
-                uint8_t isNowMoving = (gyroEnergy >= (ZUPT_ENERGY_THRESHOLD * 0.4f) || fabsf(dynAcc) > 0.12f) ? 1 : 0;
-
-                // Tentukan nilai live waveform aktual
-                float liveSignal = dynAcc;
-                if (!isNowMoving && fabsf(dynAcc) < 0.04f) {
-                    liveSignal = 0.0f; // Bersih 0.0g saat diam total
-                }
-
-                LiveSampleData liveData;
-                liveData.liveVal = liveSignal;
-                liveData.energy = gyroEnergy;
-                liveData.isMoving = isNowMoving;
-                ble.sendLiveSample(liveData);
-            }
-        }
-
-        // 4. Eksekusi Finite State Machine
+        // 4. Eksekusi Finite State Machine (jalankan sebelum live sample agar nilai Kalman terbaru tersedia)
         switch (currentState) {
             case STATE_IDLE:
                 processIdleState();
@@ -136,12 +115,46 @@ void loop() {
                 processAuthenticationState(ax, ay, az, gx, gy, gz);
                 break;
         }
+
+        // 3. Streaming Gelombang Sensor Fisik Nyata (20 Hz / tiap 50 ms)
+        static unsigned long lastLiveSampleTime = 0;
+        if (currentMillis - lastLiveSampleTime >= 50) {
+            lastLiveSampleTime = currentMillis;
+            if (ble.isConnected() && (currentState == STATE_AUTHENTICATING || currentState == STATE_TRAINING)) {
+                // Hitung magnitudo akselerasi dan hilangkan komponen gravitasi bumi 1.0g
+                float accMag = sqrtf(ax * ax + ay * ay + az * az);
+                float dynAcc = accMag - 1.0f; // 0.0g saat diam
+
+                // Energi rotasi giroskop & pasangan Raw vs Kalman terbaru
+                float gyroEnergy = (gx * gx + gy * gy + gz * gz);
+                float rawMagPair = 0.0f, kalmanMagPair = 0.0f;
+                featureExtractor.getLatestGyroPair(rawMagPair, kalmanMagPair);
+                if (rawMagPair <= 0.0f && gyroEnergy > 0.0f) {
+                    rawMagPair = sqrtf(gyroEnergy);
+                }
+
+                uint8_t isNowMoving = (gyroEnergy >= (ZUPT_ENERGY_THRESHOLD * 0.4f) || fabsf(dynAcc) > 0.12f) ? 1 : 0;
+
+                // Tentukan nilai live waveform aktual
+                float liveSignal = dynAcc;
+                if (!isNowMoving && fabsf(dynAcc) < 0.04f) {
+                    liveSignal = 0.0f; // Bersih 0.0g saat diam total
+                }
+
+                LiveSampleData liveData;
+                liveData.liveVal = liveSignal;
+                liveData.energy = gyroEnergy;
+                liveData.isMoving = isNowMoving;
+                liveData.rawGyroMag = rawMagPair;
+                liveData.kalmanGyroMag = kalmanMagPair;
+                ble.sendLiveSample(liveData);
+            }
+        }
     }
 
-    // 5. Jeda Perlindungan Bus SPI & Pencegahan Deadlock Nina-W102 saat Idle
-    // Mencegah looping 133 MHz membanjiri buffer komunikasi modul radio BLE
+    // 5. Jeda hemat daya ringan saat Idle
     if (currentState == STATE_IDLE) {
-        delay(2);
+        delay(1);
     }
 }
 
@@ -152,6 +165,7 @@ void reloadUsersFromFlash() {
         if (!activeUsers[i].isRegistered) {
             memset(&activeUsers[i], 0, sizeof(UserModel));
             ghmm[i].resetInference();
+            rawGhmm[i].resetInference();
         }
     }
 }
@@ -213,6 +227,7 @@ void handleIncomingCommands() {
             featureExtractor.resetBuffer();
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
                 ghmm[i].resetInference();
+                rawGhmm[i].resetInference();
             }
             validWindowCounter = 0;
             currentState = STATE_AUTHENTICATING;
@@ -259,6 +274,7 @@ void handleIncomingCommands() {
                     activeUsers[i].isRegistered = false;
                     memset(&activeUsers[i], 0, sizeof(UserModel));
                     ghmm[i].resetInference();
+                    rawGhmm[i].resetInference();
                 }
                 StorageManager::clearAllUsers();
                 reloadUsersFromFlash();
@@ -270,6 +286,7 @@ void handleIncomingCommands() {
                     activeUsers[slotToDelete].isRegistered = false;
                     memset(&activeUsers[slotToDelete], 0, sizeof(UserModel));
                     ghmm[slotToDelete].resetInference();
+                    rawGhmm[slotToDelete].resetInference();
                     StorageManager::saveAll(activeUsers);
                     char delMsg[32];
                     snprintf(delMsg, sizeof(delMsg), "DEL_SUCCESS:%d", slotToDelete);
@@ -315,6 +332,15 @@ void handleIncomingCommands() {
         else if (strcmp(cmd, "LOCK_DOOR") == 0 || strcmp(cmd, "LOCK_MANUAL") == 0) {
             ble.sendDoorCommand("CLOSE_DOOR");
             Serial.println(F("[CONTROL] Perintah Kunci Manual -> Pintu Dikunci!"));
+        }
+        // Toggle Mode Uji Komparasi Dual-Buffer Kalman dari Mobile App Dev Mode
+        else if (strcmp(cmd, "KALMAN_TEST:1") == 0) {
+            kalmanTestMode = true;
+            Serial.println(F("[TEST] Mode Uji Komparasi Dual-Buffer Kalman: AKTIF"));
+        }
+        else if (strcmp(cmd, "KALMAN_TEST:0") == 0) {
+            kalmanTestMode = false;
+            Serial.println(F("[TEST] Mode Uji Komparasi Dual-Buffer Kalman: NONAKTIF"));
         }
     }
 }
@@ -452,6 +478,17 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
         static float sessionNormJerkSum = 0.0f;
         static float sessionAsymSum = 0.0f;
 
+        // Akumulator komparasi Dual-Buffer Kalman (aktif saat kalmanTestMode == true)
+        static float rawFeaturesSum[NUM_FEATURES] = {0};
+        static float kRawStdSum = 0.0f;
+        static float kFiltStdSum = 0.0f;
+        static float kJerkRedSum = 0.0f;
+        static float kRmseSum = 0.0f;
+        static float kLatSum = 0.0f;
+        int rawBestUserIdx = -1;
+        float rawBestConfidence = -1.0f;
+        float rawBestLogProb = -999.0f;
+
         // Variabel evaluasi gerbang fisik sesi
         bool isKinematicallyValid = true;
         bool isPantsPocketPlacement = true;
@@ -475,28 +512,22 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
             validWindowCounter++;
             telem.windowIndex = validWindowCounter;
 
-            // Inisialisasi akumulator sesi pada awal jendela ke-1
-            if (validWindowCounter == 1) {
+            // Inisialisasi atau re-anchor akumulator pada jendela ke-1 dan jendela ke-2 (fase steady-state)
+            if (validWindowCounter == 1 || validWindowCounter == 2) {
                 for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
                     sessionFeaturesSum[d] = 0.0f;
+                    rawFeaturesSum[d] = 0.0f;
                 }
                 sessionThighExcursionSum = 0.0f;
                 sessionCrestFactorSum = 0.0f;
                 sessionAxisDominanceSum = 0.0f;
                 sessionNormJerkSum = 0.0f;
                 sessionAsymSum = 0.0f;
-            }
-
-            // Pada jendela ke-2 (fase steady-state dimulai), re-anchor akumulator agar jendela 1 (warm-up akselerasi) tidak mengotori rata-rata fisik steady
-            if (validWindowCounter == 2) {
-                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-                    sessionFeaturesSum[d] = 0.0f;
-                }
-                sessionThighExcursionSum = 0.0f;
-                sessionCrestFactorSum = 0.0f;
-                sessionAxisDominanceSum = 0.0f;
-                sessionNormJerkSum = 0.0f;
-                sessionAsymSum = 0.0f;
+                kRawStdSum = 0.0f;
+                kFiltStdSum = 0.0f;
+                kJerkRedSum = 0.0f;
+                kRmseSum = 0.0f;
+                kLatSum = 0.0f;
             }
 
             for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
@@ -507,6 +538,35 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
             sessionAxisDominanceSum += featureExtractor.computeAxisDominanceRatio();
             sessionNormJerkSum += featureExtractor.computeNormalizedJerkIndex();
             sessionAsymSum += featureExtractor.computeSwingStanceAsymmetry();
+
+            // Jalur Pembanding Dual-Buffer Tanpa Kalman (hanya diproses saat Mode Uji Kalman aktif)
+            if (kalmanTestMode) {
+                float rawFeat[NUM_FEATURES];
+                featureExtractor.computeRawFeatures(rawFeat);
+                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
+                    rawFeaturesSum[d] += rawFeat[d];
+                }
+
+                float wRawStd = 0.0f, wFiltStd = 0.0f, wJerkRed = 0.0f, wRmse = 0.0f;
+                featureExtractor.computeKalmanMetrics(wRawStd, wFiltStd, wJerkRed, wRmse);
+                kRawStdSum += wRawStd;
+                kFiltStdSum += wFiltStd;
+                kJerkRedSum += wJerkRed;
+                kRmseSum += wRmse;
+                kLatSum += featureExtractor.getLastKalmanLatencyUs();
+
+                for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                    if (activeUsers[i].isRegistered) {
+                        float rLogProb = rawGhmm[i].evaluateWindow(activeUsers[i], rawFeat, validWindowCounter);
+                        float rConf = rawGhmm[i].calculateConfidenceScore(rLogProb);
+                        if (rConf > rawBestConfidence) {
+                            rawBestConfidence = rConf;
+                            rawBestLogProb = rLogProb;
+                            rawBestUserIdx = i;
+                        }
+                    }
+                }
+            }
 
             // Evaluasi terhadap seluruh profil pemilik yang terdaftar (Multiclass 1-vs-All)
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
@@ -627,6 +687,34 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     avgNormJerk, avgAsym, avgThighExcursion, avgCrestFactor, avgAxisDominance, deltaGyro);
                 ble.sendDoorCommand(gatesMsg);
                 delay(40);
+
+                // Jika Mode Uji Kalman aktif, kirim ringkasan komparasi Dual-Buffer (100 Hz penuh) ke Mobile App
+                if (kalmanTestMode) {
+                    float kDiv = (validWindowCounter >= 2) ? (float)(validWindowCounter - 1) : 1.0f;
+                    float avgRawMean = rawFeaturesSum[0] / kDiv;
+                    float avgRawGyroStd = rawFeaturesSum[1] / kDiv;
+                    float avgRawStd100 = kRawStdSum / kDiv;
+                    float avgFiltStd100 = kFiltStdSum / kDiv;
+                    float avgJerkRed = kJerkRedSum / kDiv;
+                    float avgRmse = kRmseSum / kDiv;
+                    float avgLat = kLatSum / kDiv;
+                    float rawConfFinal = (rawBestUserIdx >= 0) ? rawBestConfidence : 0.0f;
+                    if (!isKinematicallyValid || !isPantsPocketPlacement) {
+                        rawConfFinal = fminf(rawConfFinal * 0.30f, 28.0f);
+                    }
+
+                    char kcmp1[64];
+                    snprintf(kcmp1, sizeof(kcmp1), "KCMP1:%.1f|%.1f|%.2f|%.2f|%.1f|%.2f",
+                        bestConfidence, rawConfFinal, bestLogProb, rawBestLogProb, avgJerkRed, avgRmse);
+                    ble.sendDoorCommand(kcmp1);
+                    delay(40);
+
+                    char kcmp2[64];
+                    snprintf(kcmp2, sizeof(kcmp2), "KCMP2:%.2f|%.2f|%.1f|%.1f|%.1f|%.1f|%.1f",
+                        avgRawStd100, avgFiltStd100, avgLat, avgFeatures[0], avgRawMean, avgFeatures[1], avgRawGyroStd);
+                    ble.sendDoorCommand(kcmp2);
+                    delay(40);
+                }
 
                 Serial.print(F("[SHADOW GATES] NormJerk: "));
                 Serial.print(avgNormJerk, 3);

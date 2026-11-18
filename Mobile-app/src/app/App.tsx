@@ -64,6 +64,8 @@ function AppContent() {
     recordStepTelemetry,
     verifiedUserName,
     flashSyncVersion,
+    kalmanTestMode,
+    setKalmanTestMode,
   } = useBLE();
   const { showAlert } = useDialog();
   const [sessionState, setSessionState] = useState<SessionState>("idle");
@@ -80,6 +82,8 @@ function AppContent() {
   const [currentBypassPin, setCurrentBypassPin] = useState("123456");
   const [isDevMode, setIsDevMode] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [isCommandBusy, setIsCommandBusy] = useState(false);
+  const isCommandBusyRef = useRef(false);
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanTargetType, setScanTargetType] = useState<"wearable" | "doorlock" | "all">("all");
 
@@ -150,6 +154,7 @@ function AppContent() {
   }, [connectionState, sessionState, mode, doorStatus, resetBleData, addLog]);
 
   const startSession = async (m: "auth" | "training") => {
+    if (isCommandBusyRef.current) return;
     if (connectionState !== "connected") {
       showAlert({
         title: "Bluetooth Belum Terhubung",
@@ -158,20 +163,35 @@ function AppContent() {
       });
       return;
     }
-    const profiles = await databaseService.getUserProfiles();
-    const defaultName = profiles.length > 0 ? profiles[0].name : "User 1";
-    setActiveSession({ mode: m, slot: 0, name: defaultName });
-    const cmd = m === "auth" ? "START_AUTH" : `TRAIN:0:${defaultName}`;
-    const success = await sendCommand(cmd);
-    if (success) {
-      setMode(m);
-      setSessionState("scanning");
+    isCommandBusyRef.current = true;
+    setIsCommandBusy(true);
+    try {
+      const profiles = await databaseService.getUserProfiles();
+      const defaultName = profiles.length > 0 ? profiles[0].name : "User 1";
       resetBleData();
+      setActiveSession({ mode: m, slot: 0, name: defaultName });
+      const cmd = m === "auth" ? "START_AUTH" : `TRAIN:0:${defaultName}`;
+      const success = await sendCommand(cmd);
+      if (success) {
+        setMode(m);
+        setSessionState("scanning");
+      } else {
+        setActiveSession({ mode: null, slot: 0, name: "" });
+        showAlert({
+          title: "Gagal Mengirim Perintah",
+          message: "Perintah ke Wearable RP2040 tidak mendapat respons. Pastikan Bluetooth terhubung stabil lalu coba lagi.",
+          type: "error",
+        });
+      }
+    } finally {
+      isCommandBusyRef.current = false;
+      setIsCommandBusy(false);
     }
   };
 
   // Mulai registrasi langsung buka dialog slot & nama tanpa meminta PIN
   const handleStartRegistration = () => {
+    if (isCommandBusyRef.current) return;
     if (connectionState !== "connected") {
       showAlert({
         title: "Bluetooth Belum Terhubung",
@@ -184,6 +204,7 @@ function AppContent() {
   };
 
   const startRegistrationSession = async (slot: number, name: string) => {
+    if (isCommandBusyRef.current) return;
     setRegisterModalOpen(false);
     if (connectionState !== "connected") {
       showAlert({
@@ -193,26 +214,46 @@ function AppContent() {
       });
       return;
     }
-    setActiveSession({ mode: "training", slot, name });
-
-    const success = await sendCommand(`TRAIN:${slot}:${name}`);
-    if (success) {
-      setMode("training");
-      setSessionState("scanning");
+    isCommandBusyRef.current = true;
+    setIsCommandBusy(true);
+    try {
       resetBleData();
+      setActiveSession({ mode: "training", slot, name });
+      const success = await sendCommand(`TRAIN:${slot}:${name}`);
+      if (success) {
+        setMode("training");
+        setSessionState("scanning");
+      } else {
+        setActiveSession({ mode: null, slot: 0, name: "" });
+        showAlert({
+          title: "Gagal Memulai Registrasi",
+          message: "Perintah registrasi tidak berhasil dikirim ke Wearable RP2040. Coba lagi.",
+          type: "error",
+        });
+      }
+    } finally {
+      isCommandBusyRef.current = false;
+      setIsCommandBusy(false);
     }
   };
 
-  const cancelSession = async () => {
+  const cancelSession = () => {
+    // Update UI secara instan agar tombol Batal responsif 0ms di klik pertama
+    setSessionState("idle");
+    setMode(null);
+    setActiveSession({ mode: null, slot: 0, name: "" });
+    resetBleData();
     if (connectionState === "connected") {
-      await sendCommand("CANCEL");
+      sendCommand("CANCEL").catch(console.error);
     }
-    setSessionState("idle"); 
-    setMode(null); 
+  };
+
+  const dismiss = () => {
+    setSessionState("idle");
+    setMode(null);
+    setActiveSession({ mode: null, slot: 0, name: "" });
     resetBleData();
   };
-  
-  const dismiss = () => { setSessionState("idle"); setMode(null); resetBleData(); };
 
   // Perbaikan bug mancet 10/10 dan trigger status kunci pintu
   useEffect(() => {
@@ -420,6 +461,60 @@ function AppContent() {
               </div>
             </div>
 
+            {/* Panel Switch Uji Komparasi Filter Kalman (Dual-Buffer, khusus Mode Pengembang) */}
+            {isDevMode && (
+              <div className="bg-white rounded-2xl p-3 px-4 flex items-center justify-between gap-3 border border-amber-200 shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${
+                      kalmanTestMode
+                        ? "bg-amber-50 border-amber-300 text-amber-600"
+                        : "bg-slate-50 border-slate-200 text-slate-500"
+                    }`}
+                  >
+                    <Activity size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span style={{ color: "#0F172A", fontFamily: SANS, fontWeight: 700, fontSize: "0.78rem" }}>
+                        Uji Filter Kalman
+                      </span>
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[0.52rem] font-bold uppercase"
+                        style={{
+                          background: kalmanTestMode ? "#FEF3C7" : "#F1F5F9",
+                          color: kalmanTestMode ? "#B45309" : "#64748B",
+                          border: `1px solid ${kalmanTestMode ? "#FDE68A" : "#E2E8F0"}`,
+                          fontFamily: MONO,
+                        }}
+                      >
+                        {kalmanTestMode ? "DUAL BUFFER ON" : "STANDAR"}
+                      </span>
+                    </div>
+                    <p className="truncate" style={{ color: "#64748B", fontFamily: SANS, fontSize: "0.66rem", marginTop: 1 }}>
+                      {kalmanTestMode
+                        ? "1x jalan: rekam skor Dengan vs Tanpa Kalman"
+                        : "Aktifkan untuk pengujian komparasi Kalman"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setKalmanTestMode(!kalmanTestMode)}
+                  disabled={isScanning || isCommandBusy}
+                  className="px-3 py-1.5 rounded-xl font-bold text-[0.62rem] transition-all active:scale-95 cursor-pointer shrink-0 disabled:opacity-50"
+                  style={{
+                    background: kalmanTestMode ? "#D97706" : "#F1F5F9",
+                    color: kalmanTestMode ? "#FFFFFF" : "#475569",
+                    border: `1px solid ${kalmanTestMode ? "#B45309" : "#CBD5E1"}`,
+                    fontFamily: MONO,
+                  }}
+                >
+                  {kalmanTestMode ? "MATIKAN" : "AKTIFKAN"}
+                </button>
+              </div>
+            )}
+
             {/* Banner Hasil Sesi */}
             <AnimatePresence>
               {isResult && (
@@ -522,7 +617,7 @@ function AppContent() {
                 }
                 if (!isScanning) startSession("auth");
               }}
-              disabled={isScanning || !hasRegisteredUser || connectionState !== "connected"}
+              disabled={isScanning || isCommandBusy || !hasRegisteredUser || connectionState !== "connected"}
               className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
               style={{
                 background: (connectionState !== "connected" || !hasRegisteredUser)
@@ -572,7 +667,7 @@ function AppContent() {
                 }
                 if (!isScanning) handleStartRegistration();
               }}
-              disabled={isScanning || connectionState !== "connected"}
+              disabled={isScanning || isCommandBusy || connectionState !== "connected"}
               className="w-full rounded-2xl py-3.5 px-4 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
               style={{
                 background: "transparent",
@@ -647,22 +742,19 @@ function AppContent() {
           )}
 
           {/* Batalkan Sesi */}
-          <AnimatePresence>
-            {isScanning && (
-              <motion.button
-                onClick={cancelSession}
-                className="w-full rounded-xl py-2.5 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <X size={13} style={{ color: "#DC2626" }} />
-                <span style={{ color: "#DC2626", fontFamily: MONO, fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                  Batalkan Sesi Aktif
-                </span>
-              </motion.button>
-            )}
-          </AnimatePresence>
+          {isScanning && (
+            <button
+              type="button"
+              onClick={cancelSession}
+              className="w-full rounded-xl py-3 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+              style={{ background: "#FEF2F2", border: "1px solid #FECACA" }}
+            >
+              <X size={14} style={{ color: "#DC2626" }} />
+              <span style={{ color: "#DC2626", fontFamily: MONO, fontSize: "0.68rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                Batalkan Sesi Aktif
+              </span>
+            </button>
+          )}
         </div>
       </footer>
 

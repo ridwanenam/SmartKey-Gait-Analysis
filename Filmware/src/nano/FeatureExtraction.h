@@ -13,75 +13,24 @@ private:
     SimpleKalmanFilter kalmanGy;
     SimpleKalmanFilter kalmanGz;
 
-    // Buffer sirkular untuk 1 jendela data (giroskop 3 sumbu, magnitudo akselerasi skalar, dan akselerasi mentah 3 sumbu)
+    // Dual Buffer sirkular untuk 1 jendela data:
+    // - gyroBuffer: giroskop 3 sumbu setelah Filter Kalman (jalur utama sistem)
+    // - rawGyroBuffer: giroskop 3 sumbu mentah tanpa Filter Kalman (jalur pembanding uji Kalman)
     float gyroBuffer[WINDOW_SIZE][3];
+    float rawGyroBuffer[WINDOW_SIZE][3];
     float accMagBuffer[WINDOW_SIZE];
     float accRawBuffer[WINDOW_SIZE][3];
     uint16_t bufferIndex;
+    float latestRawGyroMag;
+    float latestKalmanGyroMag;
+    float kalmanLastLatencyUs;
 
-public:
-    FeatureExtraction() 
-        : kalmanGx(0.001f, 0.002f, 0.001f),
-          kalmanGy(0.001f, 0.002f, 0.001f),
-          kalmanGz(0.001f, 0.002f, 0.001f),
-          bufferIndex(0) {}
-
-    // Reset buffer total (misal saat berhenti melangkah / ZUPT diam)
-    void resetBuffer() {
-        bufferIndex = 0;
-    }
-
-    // Geser buffer secara bertahap (Sliding Window dengan 50% Overlap)
-    void slideBuffer(uint16_t step = WINDOW_STEP) {
-        if (step >= WINDOW_SIZE) {
-            bufferIndex = 0;
-            return;
-        }
-        uint16_t remaining = WINDOW_SIZE - step;
-        memmove(&gyroBuffer[0][0], &gyroBuffer[step][0], remaining * 3 * sizeof(float));
-        memmove(&accMagBuffer[0], &accMagBuffer[step], remaining * sizeof(float));
-        memmove(&accRawBuffer[0][0], &accRawBuffer[step][0], remaining * 3 * sizeof(float));
-        bufferIndex = remaining;
-    }
-
-    // Memasukkan 1 sampel data mentah IMU (akselerometer & giroskop), menyaring noise via Kalman, dan menyimpan ke buffer
-    bool addSample(float ax, float ay, float az, float gx, float gy, float gz) {
-        // 1. Reduksi getaran kain/deadband
-        gx = (fabs(gx) < GYRO_THRESHOLD) ? 0.0f : gx;
-        gy = (fabs(gy) < GYRO_THRESHOLD) ? 0.0f : gy;
-        gz = (fabs(gz) < GYRO_THRESHOLD) ? 0.0f : gz;
-
-        // 2. Filter Kalman diskrit gyro
-        float filteredX = kalmanGx.updateEstimate(gx);
-        float filteredY = kalmanGy.updateEstimate(gy);
-        float filteredZ = kalmanGz.updateEstimate(gz);
-
-        // 3. Hitung magnitudo akselerasi skalar dan kurangi komponen gravitasi bumi 1.0g (100% Orientation Invariant)
-        float accMag = sqrtf(ax * ax + ay * ay + az * az);
-        float dynAcc = fabsf(accMag - 1.0f); // Intensitas getaran/hentakan translasi
-
-        // 4. Simpan ke buffer
-        if (bufferIndex < WINDOW_SIZE) {
-            gyroBuffer[bufferIndex][0] = filteredX;
-            gyroBuffer[bufferIndex][1] = filteredY;
-            gyroBuffer[bufferIndex][2] = filteredZ;
-            accMagBuffer[bufferIndex] = dynAcc;
-            accRawBuffer[bufferIndex][0] = ax;
-            accRawBuffer[bufferIndex][1] = ay;
-            accRawBuffer[bufferIndex][2] = az;
-            bufferIndex++;
-        }
-
-        // Bernilai true jika jendela sudah genap WINDOW_SIZE sampel (1.5 detik)
-        return (bufferIndex >= WINDOW_SIZE);
-    }
-
-    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk Discriminator)
-    bool evaluateZUPT() const {
+    // Helper internal ZUPT yang dapat mengevaluasi buffer Kalman maupun buffer Raw
+    bool evaluateZUPTFromBuffer(const float buf[WINDOW_SIZE][3], bool logDiscard) const {
         float totalEnergy = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
             for (uint8_t j = 0; j < 3; ++j) {
-                totalEnergy += (gyroBuffer[i][j] * gyroBuffer[i][j]);
+                totalEnergy += (buf[i][j] * buf[i][j]);
             }
         }
         totalEnergy /= (float)WINDOW_SIZE;
@@ -93,7 +42,7 @@ public:
         float jerkEnergy = 0.0f;
         for (uint16_t i = 1; i < WINDOW_SIZE; ++i) {
             for (uint8_t j = 0; j < 3; ++j) {
-                float diff = gyroBuffer[i][j] - gyroBuffer[i - 1][j];
+                float diff = buf[i][j] - buf[i - 1][j];
                 jerkEnergy += (diff * diff);
             }
         }
@@ -102,22 +51,24 @@ public:
         // Langkah kaki sejati di saku menghasilkan sentakan saat hentakan tumit (jerkEnergy >= 4.5)
         // Ayunan tangan bebas di udara bersifat mulus/sinusoidal murni (jerkEnergy < 4.5)
         if (jerkEnergy < 4.5f) {
-            Serial.println(F("[ZUPT] Gerak Sinusoidal Mulus / Ayunan Tangan Terdeteksi -> Mengabaikan Jendela"));
+            if (logDiscard) {
+                Serial.println(F("[ZUPT] Gerak Sinusoidal Mulus / Ayunan Tangan Terdeteksi -> Mengabaikan Jendela"));
+            }
             return false;
         }
 
         return true;
     }
 
-    // Ekstraksi 5 Fitur Biometrik Ortogonal & Invarian Orientasi
-    void computeFeatures(float extractedFeatures[NUM_FEATURES]) {
+    // Helper internal ekstraksi 5 fitur biometrik dari buffer gyro mana pun (Kalman atau Raw)
+    void computeFeaturesFromBuffer(const float buf[WINDOW_SIZE][3], float extractedFeatures[NUM_FEATURES]) const {
         // 1. Hitung magnitude sinyal 3D gyro per timestamp: r = sqrt(gx^2 + gy^2 + gz^2)
         float rawMag[WINDOW_SIZE];
         float sum = 0.0f;
         for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
-            float gx = gyroBuffer[i][0];
-            float gy = gyroBuffer[i][1];
-            float gz = gyroBuffer[i][2];
+            float gx = buf[i][0];
+            float gy = buf[i][1];
+            float gz = buf[i][2];
             rawMag[i] = sqrtf(gx * gx + gy * gy + gz * gz);
             sum += rawMag[i];
         }
@@ -195,6 +146,155 @@ public:
         extractedFeatures[2] = cadenceRegularity; // Konsistensi Irama (%)
         extractedFeatures[3] = stridePeriod;      // Periode Langkah (sampel)
         extractedFeatures[4] = heelStrikeImpact;  // Hentakan Kaki (%g)
+    }
+
+public:
+    FeatureExtraction() 
+        : kalmanGx(0.001f, 0.002f, 0.001f),
+          kalmanGy(0.001f, 0.002f, 0.001f),
+          kalmanGz(0.001f, 0.002f, 0.001f),
+          bufferIndex(0),
+          latestRawGyroMag(0.0f),
+          latestKalmanGyroMag(0.0f),
+          kalmanLastLatencyUs(0.0f) {}
+
+    // Reset buffer total (misal saat berhenti melangkah / ZUPT diam)
+    void resetBuffer() {
+        bufferIndex = 0;
+    }
+
+    // Geser buffer secara bertahap (Sliding Window dengan 50% Overlap)
+    void slideBuffer(uint16_t step = WINDOW_STEP) {
+        if (step >= WINDOW_SIZE) {
+            bufferIndex = 0;
+            return;
+        }
+        uint16_t remaining = WINDOW_SIZE - step;
+        memmove(&gyroBuffer[0][0], &gyroBuffer[step][0], remaining * 3 * sizeof(float));
+        memmove(&rawGyroBuffer[0][0], &rawGyroBuffer[step][0], remaining * 3 * sizeof(float));
+        memmove(&accMagBuffer[0], &accMagBuffer[step], remaining * sizeof(float));
+        memmove(&accRawBuffer[0][0], &accRawBuffer[step][0], remaining * 3 * sizeof(float));
+        bufferIndex = remaining;
+    }
+
+    // Memasukkan 1 sampel data mentah IMU (akselerometer & giroskop), menyaring noise via Kalman, dan menyimpan ke dual buffer
+    bool addSample(float ax, float ay, float az, float gx, float gy, float gz) {
+        // Simpan giroskop mentah murni (tanpa deadband/Kalman) untuk jalur komparasi uji Kalman
+        float rawGx = gx;
+        float rawGy = gy;
+        float rawGz = gz;
+        latestRawGyroMag = sqrtf(rawGx * rawGx + rawGy * rawGy + rawGz * rawGz);
+
+        // 1. Reduksi getaran kain/deadband
+        float deadGx = (fabs(gx) < GYRO_THRESHOLD) ? 0.0f : gx;
+        float deadGy = (fabs(gy) < GYRO_THRESHOLD) ? 0.0f : gy;
+        float deadGz = (fabs(gz) < GYRO_THRESHOLD) ? 0.0f : gz;
+
+        // 2. Filter Kalman diskrit gyro + catat latensi komputasi 3-sumbu (mikrodetik)
+        uint32_t t0 = micros();
+        float filteredX = kalmanGx.updateEstimate(deadGx);
+        float filteredY = kalmanGy.updateEstimate(deadGy);
+        float filteredZ = kalmanGz.updateEstimate(deadGz);
+        kalmanLastLatencyUs = (float)(micros() - t0);
+        latestKalmanGyroMag = sqrtf(filteredX * filteredX + filteredY * filteredY + filteredZ * filteredZ);
+
+        // 3. Hitung magnitudo akselerasi skalar dan kurangi komponen gravitasi bumi 1.0g (100% Orientation Invariant)
+        float accMag = sqrtf(ax * ax + ay * ay + az * az);
+        float dynAcc = fabsf(accMag - 1.0f); // Intensitas getaran/hentakan translasi
+
+        // 4. Simpan ke kedua buffer secara sinkron
+        if (bufferIndex < WINDOW_SIZE) {
+            gyroBuffer[bufferIndex][0] = filteredX;
+            gyroBuffer[bufferIndex][1] = filteredY;
+            gyroBuffer[bufferIndex][2] = filteredZ;
+            rawGyroBuffer[bufferIndex][0] = rawGx;
+            rawGyroBuffer[bufferIndex][1] = rawGy;
+            rawGyroBuffer[bufferIndex][2] = rawGz;
+            accMagBuffer[bufferIndex] = dynAcc;
+            accRawBuffer[bufferIndex][0] = ax;
+            accRawBuffer[bufferIndex][1] = ay;
+            accRawBuffer[bufferIndex][2] = az;
+            bufferIndex++;
+        }
+
+        // Bernilai true jika jendela sudah genap WINDOW_SIZE sampel (1.5 detik)
+        return (bufferIndex >= WINDOW_SIZE);
+    }
+
+    void getLatestGyroPair(float &outRawMag, float &outKalmanMag) const {
+        outRawMag = latestRawGyroMag;
+        outKalmanMag = latestKalmanGyroMag;
+    }
+
+    float getLastKalmanLatencyUs() const {
+        return kalmanLastLatencyUs;
+    }
+
+    // Penapisan Zero-Velocity Update (ZUPT) & Morfologi Hentakan Langkah (Gait Jerk Discriminator)
+    bool evaluateZUPT() const {
+        return evaluateZUPTFromBuffer(gyroBuffer, true);
+    }
+
+    // Evaluasi ZUPT pada buffer mentah (tanpa Kalman) untuk pengujian komparasi
+    bool evaluateRawZUPT() const {
+        return evaluateZUPTFromBuffer(rawGyroBuffer, false);
+    }
+
+    // Ekstraksi 5 Fitur Biometrik dari buffer Kalman (jalur utama)
+    void computeFeatures(float extractedFeatures[NUM_FEATURES]) const {
+        computeFeaturesFromBuffer(gyroBuffer, extractedFeatures);
+    }
+
+    // Ekstraksi 5 Fitur Biometrik dari buffer Raw (jalur pembanding tanpa Kalman)
+    void computeRawFeatures(float extractedFeatures[NUM_FEATURES]) const {
+        computeFeaturesFromBuffer(rawGyroBuffer, extractedFeatures);
+    }
+
+    // Hitung metrik kuantitatif kinerja Filter Kalman 100 Hz penuh dalam 1 jendela (150 sampel)
+    void computeKalmanMetrics(float &rawStd, float &filtStd, float &jerkReductionPct, float &rmseDiff) const {
+        float rawMag[WINDOW_SIZE];
+        float filtMag[WINDOW_SIZE];
+        float sumRaw = 0.0f, sumFilt = 0.0f;
+
+        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
+            rawMag[i] = sqrtf(rawGyroBuffer[i][0] * rawGyroBuffer[i][0] +
+                              rawGyroBuffer[i][1] * rawGyroBuffer[i][1] +
+                              rawGyroBuffer[i][2] * rawGyroBuffer[i][2]);
+            filtMag[i] = sqrtf(gyroBuffer[i][0] * gyroBuffer[i][0] +
+                               gyroBuffer[i][1] * gyroBuffer[i][1] +
+                               gyroBuffer[i][2] * gyroBuffer[i][2]);
+            sumRaw += rawMag[i];
+            sumFilt += filtMag[i];
+        }
+
+        float meanRaw = sumRaw / (float)WINDOW_SIZE;
+        float meanFilt = sumFilt / (float)WINDOW_SIZE;
+
+        float varRawSum = 0.0f, varFiltSum = 0.0f, sqDiffSum = 0.0f;
+        for (uint16_t i = 0; i < WINDOW_SIZE; ++i) {
+            float dr = rawMag[i] - meanRaw;
+            float df = filtMag[i] - meanFilt;
+            float diff = rawMag[i] - filtMag[i];
+            varRawSum += dr * dr;
+            varFiltSum += df * df;
+            sqDiffSum += diff * diff;
+        }
+
+        rawStd = sqrtf(varRawSum / (float)(WINDOW_SIZE - 1));
+        filtStd = sqrtf(varFiltSum / (float)(WINDOW_SIZE - 1));
+        rmseDiff = sqrtf(sqDiffSum / (float)WINDOW_SIZE);
+
+        // RMS Jerk (turunan sesaat antar sampel 10 ms): mengukur kekasaran/ripple noise frekuensi tinggi
+        float rawJerkSq = 0.0f, filtJerkSq = 0.0f;
+        for (uint16_t i = 1; i < WINDOW_SIZE; ++i) {
+            float jr = rawMag[i] - rawMag[i - 1];
+            float jf = filtMag[i] - filtMag[i - 1];
+            rawJerkSq += jr * jr;
+            filtJerkSq += jf * jf;
+        }
+        float rawJerkRms = sqrtf(rawJerkSq / (float)(WINDOW_SIZE - 1));
+        float filtJerkRms = sqrtf(filtJerkSq / (float)(WINDOW_SIZE - 1));
+        jerkReductionPct = (rawJerkRms > EPSILON) ? (((rawJerkRms - filtJerkRms) / rawJerkRms) * 100.0f) : 0.0f;
     }
 
     // Mengestimasi rentang ayunan sudut gravitasi paha (Thigh Pendulum Excursion Angle, derajat)

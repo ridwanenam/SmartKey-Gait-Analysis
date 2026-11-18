@@ -44,7 +44,25 @@ export interface LiveSample {
   liveVal: number;
   energy: number;
   isMoving: boolean;
+  rawGyroMag?: number;
+  kalmanGyroMag?: number;
   timestamp: number;
+}
+
+export interface KalmanComparisonData {
+  kalmanConfidence: number;
+  rawConfidence: number;
+  kalmanLogLikelihood: number;
+  rawLogLikelihood: number;
+  jerkReductionPct: number;
+  rmseDiff: number;
+  rawStd100: number;
+  filteredStd100: number;
+  latencyUs: number;
+  kalmanMean: number;
+  rawMean: number;
+  kalmanGyroStd: number;
+  rawGyroStd: number;
 }
 
 export interface BLEData {
@@ -99,6 +117,8 @@ interface BLEContextType {
   deleteFlashUser: (slot: number) => Promise<boolean>;
   formatFlashMemory: () => Promise<boolean>;
   flashSyncVersion: number;
+  kalmanTestMode: boolean;
+  setKalmanTestMode: (enabled: boolean) => Promise<void>;
 }
 
 const defaultBLEData: BLEData = {
@@ -180,12 +200,21 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   const isAutoConnectingRef = useRef<boolean>(false);
   const autoConnectTimerRef = useRef<any>(null);
   const autoConnectRef = useRef<() => Promise<void>>(async () => {});
+  const startupDoorScanPendingRef = useRef<boolean>(true);
+  const doorLockWasConnectedRef = useRef<boolean>(false);
+  const doorLockRetryCountRef = useRef<number>(0);
+
+  const [kalmanTestMode, setKalmanTestModeState] = useState<boolean>(false);
+  const kalmanTestModeRef = useRef<boolean>(false);
+  const latestKalmanCmpRef = useRef<Partial<KalmanComparisonData> | null>(null);
 
   const currentSessionWaveform = useRef<Array<{
     t: number;
     val: number;
     energy: number;
     isMoving: boolean;
+    rawGyroMag?: number;
+    kalmanGyroMag?: number;
   }>>([]);
   const currentSessionSteps = useRef<Array<{
     step: number;
@@ -231,9 +260,19 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     currentSessionWaveform.current = [];
     latestAuthScoresRef.current = [];
     latestGatesRef.current = null;
+    latestKalmanCmpRef.current = null;
     lastProgress.current = 0;
     verifiedUserNameRef.current = null;
     setVerifiedUserName(null);
+
+    // Hentikan timer background scan saat sesi berjalan agar radio BLE 100% bersih untuk Wearable
+    if (info.mode !== null) {
+      if (autoConnectTimerRef.current) {
+        clearTimeout(autoConnectTimerRef.current);
+        autoConnectTimerRef.current = null;
+      }
+      BleClient.stopLEScan().catch(() => {});
+    }
   }, []);
 
   const recordStepTelemetry = useCallback((stepItem: any) => {
@@ -293,6 +332,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     verifiedUserNameRef.current = null;
     latestAuthScoresRef.current = [];
     latestGatesRef.current = null;
+    latestKalmanCmpRef.current = null;
     latestTelemetryRef.current = defaultBLEData.telemetry;
     setVerifiedUserName(null);
     currentSessionSteps.current = [];
@@ -325,6 +365,9 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       targetUser: resolvedUser,
       scoresBreakdown: latestAuthScoresRef.current,
       gates: latestGatesRef.current,
+      kalmanComparison: (latestKalmanCmpRef.current && latestKalmanCmpRef.current.kalmanConfidence !== undefined)
+        ? latestKalmanCmpRef.current
+        : null,
       summary: {
         totalWindows: Math.max(lastProgress.current || 5, currentSessionSteps.current.length, 5),
         confidenceScore: parseFloat(scoreVal.toFixed(1)),
@@ -365,6 +408,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       return;
     }
     wearableStateRef.current = "disconnected";
+    wearableStateRef.current = "disconnected";
     setWearableState("disconnected");
     setWearableDeviceId(null);
     wearableDeviceIdRef.current = null;
@@ -387,17 +431,21 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       return;
     }
     doorLockStateRef.current = "disconnected";
+    doorLockStateRef.current = "disconnected";
     setDoorLockState("disconnected");
     setDoorLockDeviceId(null);
     doorLockDeviceIdRef.current = null;
     setIsDoorUnlocked(false);
     addLog({ type: "system", status: "Warning", message: "Terputus dari Smart Door Lock (ESP32)" });
 
-    if (!manualDisconnectDoorLockRef.current) {
+    if (!manualDisconnectDoorLockRef.current && doorLockRetryCountRef.current < 3) {
+      doorLockRetryCountRef.current += 1;
       if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
       autoConnectTimerRef.current = setTimeout(() => {
-        addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Door Lock..." });
-        if (autoConnectRef.current) autoConnectRef.current();
+        if (activeSessionInfo.current.mode === null && autoConnectRef.current) {
+          addLog({ type: "system", status: "Info", message: "Mencoba auto-reconnect ke Door Lock..." });
+          autoConnectRef.current();
+        }
       }, 3000);
     }
   }, [addLog]);
@@ -481,6 +529,37 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         });
         latestGatesRef.current = gData;
         console.log("[DIAGNOSTIC GATES]", gData);
+      } else if (text.startsWith("KCMP1:")) {
+        // Format: KCMP1:kalmanConf|rawConf|kalmanLL|rawLL|jerkRedPct|rmse
+        const parts = text.substring(6).split("|").map(Number);
+        if (parts.length >= 6 && parts.every((n) => !isNaN(n))) {
+          latestKalmanCmpRef.current = {
+            ...(latestKalmanCmpRef.current || {}),
+            kalmanConfidence: parts[0],
+            rawConfidence: parts[1],
+            kalmanLogLikelihood: parts[2],
+            rawLogLikelihood: parts[3],
+            jerkReductionPct: parts[4],
+            rmseDiff: parts[5],
+          };
+          console.log("[KALMAN CMP1]", latestKalmanCmpRef.current);
+        }
+      } else if (text.startsWith("KCMP2:")) {
+        // Format: KCMP2:rawStd100|filtStd100|latencyUs|kalmanMean|rawMean|kalmanGyroStd|rawGyroStd
+        const parts = text.substring(6).split("|").map(Number);
+        if (parts.length >= 7 && parts.every((n) => !isNaN(n))) {
+          latestKalmanCmpRef.current = {
+            ...(latestKalmanCmpRef.current || {}),
+            rawStd100: parts[0],
+            filteredStd100: parts[1],
+            latencyUs: parts[2],
+            kalmanMean: parts[3],
+            rawMean: parts[4],
+            kalmanGyroStd: parts[5],
+            rawGyroStd: parts[6],
+          };
+          console.log("[KALMAN CMP2]", latestKalmanCmpRef.current);
+        }
       } else if (text.startsWith("OPEN_DOOR")) {
         const parts = text.split(":");
         const name = parts.length > 1 ? parts.slice(1).join(":").trim() : "Owner";
@@ -606,8 +685,10 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         const liveVal = value.getFloat32(0, true);
         const energy = value.getFloat32(4, true);
         const isMoving = value.getUint8(8) === 1;
+        const rawGyroMag = value.byteLength >= 13 ? value.getFloat32(9, true) : Math.sqrt(Math.max(0, energy));
+        const kalmanGyroMag = value.byteLength >= 17 ? value.getFloat32(13, true) : rawGyroMag;
         const now = Date.now();
-        setLiveSample({ liveVal, energy, isMoving, timestamp: now });
+        setLiveSample({ liveVal, energy, isMoving, rawGyroMag, kalmanGyroMag, timestamp: now });
 
         if (activeSessionInfo.current.mode && !sessionLogged.current) {
           if (sessionStartTime.current === 0) {
@@ -619,6 +700,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
             val: parseFloat(liveVal.toFixed(3)),
             energy: parseFloat(energy.toFixed(3)),
             isMoving,
+            rawGyroMag: parseFloat(rawGyroMag.toFixed(2)),
+            kalmanGyroMag: parseFloat(kalmanGyroMag.toFixed(2)),
           });
         }
       }
@@ -845,14 +928,12 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ── Koneksi Wearable (Independen & Anti-Tabrakan) ──────────────────────────
+  // ── Koneksi Wearable (Independen, Anti-Tabrakan & Anti-Stuck Kuning) ───────
   const performWearableConnection = async (targetDevice: { deviceId: string; name?: string }) => {
-    // Failsafe: Tolak jika perangkat ini sebenarnya adalah Door Lock ESP32
     if (targetDevice.name && targetDevice.name.includes("DoorLock")) {
       console.warn("[BLE] Menolak koneksi Wearable: Terdeteksi sebagai DoorLock!", targetDevice.name);
       return;
     }
-    // Failsafe: Tolak jika deviceId ini sedang terhubung sebagai Door Lock
     if (doorLockDeviceIdRef.current && targetDevice.deviceId === doorLockDeviceIdRef.current) {
       console.warn("[BLE] Menolak koneksi Wearable: Device ID sama dengan Door Lock aktif:", targetDevice.deviceId);
       return;
@@ -861,31 +942,47 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     addLog({ type: "system", status: "Info", message: `Menghubungkan ke Wearable (${targetDevice.name || "RP2040"})...` });
     wearableStateRef.current = "connecting";
     setWearableState("connecting");
-    await BleClient.connect(targetDevice.deviceId, (id) => onWearableDisconnected(id));
-    await setupNotificationsForWearable(targetDevice.deviceId);
+    try {
+      await BleClient.connect(targetDevice.deviceId, (id) => onWearableDisconnected(id), { timeout: 5000 });
+      await setupNotificationsForWearable(targetDevice.deviceId);
 
-    localStorage.setItem("smartkey_wearable_id", targetDevice.deviceId);
-    localStorage.setItem("smartkey_last_device_id", targetDevice.deviceId);
-    if (targetDevice.name) {
-      localStorage.setItem("smartkey_wearable_name", targetDevice.name);
+      localStorage.setItem("smartkey_wearable_id", targetDevice.deviceId);
+      localStorage.setItem("smartkey_last_device_id", targetDevice.deviceId);
+      if (targetDevice.name) {
+        localStorage.setItem("smartkey_wearable_name", targetDevice.name);
+      }
+
+      wearableDeviceIdRef.current = targetDevice.deviceId;
+      setWearableDeviceId(targetDevice.deviceId);
+      wearableStateRef.current = "connected";
+      setWearableState("connected");
+      manualDisconnectWearableRef.current = false;
+      addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Wearable (${targetDevice.name || "SmartKey_Wearable"})` });
+
+      // Sinkronkan status Mode Uji Kalman ke RP2040 jika aktif
+      if (kalmanTestModeRef.current) {
+        BleClient.writeWithoutResponse(
+          targetDevice.deviceId,
+          SMART_KEY_SERVICE_UUID,
+          COMMAND_CHARACTERISTIC_UUID,
+          textToDataView("KALMAN_TEST:1"),
+          { timeout: 2000 }
+        ).catch(() => {});
+      }
+    } catch (err) {
+      // Pastikan status TIDAK pernah nyangkut di "connecting" (kuning) saat gagal!
+      wearableStateRef.current = "disconnected";
+      setWearableState("disconnected");
+      throw err;
     }
-
-    wearableDeviceIdRef.current = targetDevice.deviceId;
-    setWearableDeviceId(targetDevice.deviceId);
-    wearableStateRef.current = "connected";
-    setWearableState("connected");
-    manualDisconnectWearableRef.current = false;
-    addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Wearable (${targetDevice.name || "SmartKey_Wearable"})` });
   };
 
-  // ── Koneksi ESP32 Door Lock (Independen & Anti-Tabrakan) ────────────────────
+  // ── Koneksi ESP32 Door Lock (Independen, Anti-Tabrakan & Anti-Stuck Kuning) ─
   const performDoorLockConnection = async (targetDevice: { deviceId: string; name?: string }) => {
-    // Failsafe: Tolak jika perangkat ini sebenarnya adalah Wearable Arduino RP2040
     if (targetDevice.name && (targetDevice.name.includes("Wearable") || !targetDevice.name.includes("DoorLock"))) {
       console.warn("[BLE] Menolak koneksi DoorLock: Nama bukan DoorLock!", targetDevice.name);
       return;
     }
-    // Failsafe: Tolak jika deviceId ini sedang terhubung sebagai Wearable
     if (wearableDeviceIdRef.current && targetDevice.deviceId === wearableDeviceIdRef.current) {
       console.warn("[BLE] Menolak koneksi DoorLock: Device ID sama dengan Wearable aktif:", targetDevice.deviceId);
       return;
@@ -894,66 +991,58 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     addLog({ type: "system", status: "Info", message: `Menghubungkan ke Solenoid Door Lock (${targetDevice.name || "ESP32"})...` });
     doorLockStateRef.current = "connecting";
     setDoorLockState("connecting");
-    await BleClient.connect(targetDevice.deviceId, (id) => onDoorLockDisconnected(id));
-    await setupNotificationsForDoorLock(targetDevice.deviceId);
+    try {
+      await BleClient.connect(targetDevice.deviceId, (id) => onDoorLockDisconnected(id), { timeout: 4500 });
+      await setupNotificationsForDoorLock(targetDevice.deviceId);
 
-    localStorage.setItem("smartkey_doorlock_id", targetDevice.deviceId);
-    if (targetDevice.name) {
-      localStorage.setItem("smartkey_doorlock_name", targetDevice.name);
+      localStorage.setItem("smartkey_doorlock_id", targetDevice.deviceId);
+      if (targetDevice.name) {
+        localStorage.setItem("smartkey_doorlock_name", targetDevice.name);
+      }
+
+      doorLockDeviceIdRef.current = targetDevice.deviceId;
+      setDoorLockDeviceId(targetDevice.deviceId);
+      doorLockStateRef.current = "connected";
+      setDoorLockState("connected");
+      manualDisconnectDoorLockRef.current = false;
+      doorLockWasConnectedRef.current = true;
+      doorLockRetryCountRef.current = 0;
+      addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Door Lock (${targetDevice.name || "SmartKey_DoorLock"})` });
+    } catch (err) {
+      // Wajib pulihkan status ke "disconnected" agar pill ESP32 tidak nyangkut kuning!
+      doorLockStateRef.current = "disconnected";
+      setDoorLockState("disconnected");
+      throw err;
     }
-
-    doorLockDeviceIdRef.current = targetDevice.deviceId;
-    setDoorLockDeviceId(targetDevice.deviceId);
-    doorLockStateRef.current = "connected";
-    setDoorLockState("connected");
-    manualDisconnectDoorLockRef.current = false;
-    addLog({ type: "system", status: "Success", message: `Berhasil terhubung ke Door Lock (${targetDevice.name || "SmartKey_DoorLock"})` });
   };
 
-  // ── Auto-Connect Cerdas Dual Peripheral ───────────────────────────────────
+  // ── Auto-Connect Cerdas Dual Peripheral (Anti GATT-Storm) ───────────────────
   const autoConnect = useCallback(async () => {
     if (isAutoConnectingRef.current) return;
+    // Jangan ganggu lalu lintas BLE saat sesi Auth/Registrasi aktif
+    if (activeSessionInfo.current.mode !== null) return;
 
     try {
       isAutoConnectingRef.current = true;
       await BleClient.initialize();
 
-      let lastWearableId = localStorage.getItem("smartkey_wearable_id") || localStorage.getItem("smartkey_last_device_id");
-      let lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
+      const lastWearableId = localStorage.getItem("smartkey_wearable_id") || localStorage.getItem("smartkey_last_device_id");
+      const lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
 
-      // Failsafe sanitasi: Jika ID DoorLock sama persis dengan Wearable (akibat salah pairing sebelumnya), bersihkan!
       if (lastWearableId && lastDoorLockId && lastWearableId === lastDoorLockId) {
         console.warn("[BLE AUTO] Membersihkan ID DoorLock karena bertabrakan dengan ID Wearable!");
         localStorage.removeItem("smartkey_doorlock_id");
-        lastDoorLockId = null;
       }
 
-      // 1. Coba koneksi langsung ke Wearable jika belum terhubung
-      if (lastWearableId && wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current) {
-        try {
-          console.log("[BLE AUTO] Direct connect ke Wearable:", lastWearableId);
-          await performWearableConnection({ deviceId: lastWearableId, name: "SmartKey_Wearable" });
-        } catch (e) {
-          console.log("[BLE AUTO] Direct connect Wearable gagal:", e);
-        }
-      }
-
-      // 2. Coba koneksi langsung ke ESP32 Door Lock jika belum terhubung
-      if (lastDoorLockId && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current) {
-        try {
-          console.log("[BLE AUTO] Direct connect ke DoorLock:", lastDoorLockId);
-          await performDoorLockConnection({ deviceId: lastDoorLockId, name: "SmartKey_DoorLock" });
-        } catch (e) {
-          console.log("[BLE AUTO] Direct connect DoorLock gagal:", e);
-        }
-      }
-
-      // 3. Evaluasi apakah masih butuh scan latar belakang
+      // Hanya pindai lewat requestLEScan (JANGAN direct-connectGatt ke perangkat mati agar Android GATT queue tidak macet 10-30 detik!)
       const needWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
-      const needDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+      const shouldSearchDoorLock =
+        doorLockStateRef.current !== "connected" &&
+        !manualDisconnectDoorLockRef.current &&
+        (startupDoorScanPendingRef.current || (doorLockWasConnectedRef.current && doorLockRetryCountRef.current <= 3));
 
-      if (needWearable || needDoorLock) {
-        console.log("[BLE AUTO] Memulai background scan dual device...");
+      if (needWearable || shouldSearchDoorLock) {
+        console.log("[BLE AUTO] Memindai perangkat menyala via BLE scan...", { needWearable, shouldSearchDoorLock });
         try {
           await BleClient.stopLEScan();
         } catch (_) {}
@@ -981,10 +1070,14 @@ export function BLEProvider({ children }: { children: ReactNode }) {
               }
             }
 
-            // Jika semua perangkat yang dibutuhkan sudah terhubung, hentikan scan lebih awal
-            const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
-            const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
-            if (!stillNeedWearable && !stillNeedDoorLock) {
+            // Hentikan scan seketika bila kebutuhan utama sudah tersambung
+            const stillNeedW = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+            const stillNeedD =
+              doorLockStateRef.current !== "connected" &&
+              !manualDisconnectDoorLockRef.current &&
+              (startupDoorScanPendingRef.current || (doorLockWasConnectedRef.current && doorLockRetryCountRef.current < 3));
+
+            if (!stillNeedW && !stillNeedD) {
               try {
                 await BleClient.stopLEScan();
               } catch (_) {}
@@ -997,24 +1090,32 @@ export function BLEProvider({ children }: { children: ReactNode }) {
           }
         );
 
-        // Scan berjalan 5 detik per siklus
+        // Scan berjalan 4 detik per siklus
         setTimeout(async () => {
           try {
             await BleClient.stopLEScan();
           } catch (_) {}
           isAutoConnectingRef.current = false;
 
-          // Jadwalkan scan berikutnya secara berkala jika Arduino atau Door Lock belum menyala/terhubung
+          // Setelah siklus scan awal selesai, jangan terus menerus memindai ESP32 yang memang tidak dicolok
+          startupDoorScanPendingRef.current = false;
+
+          if (activeSessionInfo.current.mode !== null) return;
+
           const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
-          const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+          const stillNeedDoorLock =
+            doorLockStateRef.current !== "connected" &&
+            !manualDisconnectDoorLockRef.current &&
+            doorLockWasConnectedRef.current &&
+            doorLockRetryCountRef.current < 3;
 
           if (stillNeedWearable || stillNeedDoorLock) {
             if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
             autoConnectTimerRef.current = setTimeout(() => {
               if (autoConnectRef.current) autoConnectRef.current();
-            }, 3000);
+            }, 3500);
           }
-        }, 5000);
+        }, 4000);
       } else {
         isAutoConnectingRef.current = false;
       }
@@ -1024,15 +1125,16 @@ export function BLEProvider({ children }: { children: ReactNode }) {
         await BleClient.stopLEScan();
       } catch (_) {}
       isAutoConnectingRef.current = false;
-      const lastDoorLockId = localStorage.getItem("smartkey_doorlock_id");
-      const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
-      const stillNeedDoorLock = (Boolean(lastDoorLockId) || wearableStateRef.current !== "connected") && doorLockStateRef.current !== "connected" && !manualDisconnectDoorLockRef.current;
+      startupDoorScanPendingRef.current = false;
 
-      if (stillNeedWearable || stillNeedDoorLock) {
+      if (activeSessionInfo.current.mode !== null) return;
+
+      const stillNeedWearable = wearableStateRef.current !== "connected" && !manualDisconnectWearableRef.current;
+      if (stillNeedWearable) {
         if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
         autoConnectTimerRef.current = setTimeout(() => {
           if (autoConnectRef.current) autoConnectRef.current();
-        }, 3500);
+        }, 4000);
       }
     }
   }, []);
@@ -1140,13 +1242,33 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
+    // Hentikan scan latar belakang sebelum kirim perintah kritikal agar antrean GATT bebas hambatan
+    if (autoConnectTimerRef.current) {
+      clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = null;
+    }
     try {
-      await BleClient.write(
-        wearableDeviceIdRef.current,
-        SMART_KEY_SERVICE_UUID,
-        COMMAND_CHARACTERISTIC_UUID,
-        textToDataView(cmd)
-      );
+      await BleClient.stopLEScan();
+    } catch (_) {}
+
+    try {
+      try {
+        await BleClient.writeWithoutResponse(
+          wearableDeviceIdRef.current,
+          SMART_KEY_SERVICE_UUID,
+          COMMAND_CHARACTERISTIC_UUID,
+          textToDataView(cmd),
+          { timeout: 2000 }
+        );
+      } catch (_) {
+        await BleClient.write(
+          wearableDeviceIdRef.current,
+          SMART_KEY_SERVICE_UUID,
+          COMMAND_CHARACTERISTIC_UUID,
+          textToDataView(cmd),
+          { timeout: 2500 }
+        );
+      }
       addLog({ type: "system", status: "Success", message: `Perintah Wearable: ${cmd}` });
       return true;
     } catch (error) {
@@ -1220,6 +1342,41 @@ export function BLEProvider({ children }: { children: ReactNode }) {
     return ok;
   }, [sendCommand, addLog]);
 
+  const setKalmanTestMode = useCallback(async (enabled: boolean) => {
+    kalmanTestModeRef.current = enabled;
+    setKalmanTestModeState(enabled);
+    if (wearableDeviceIdRef.current && wearableStateRef.current === "connected") {
+      try {
+        await BleClient.writeWithoutResponse(
+          wearableDeviceIdRef.current,
+          SMART_KEY_SERVICE_UUID,
+          COMMAND_CHARACTERISTIC_UUID,
+          textToDataView(enabled ? "KALMAN_TEST:1" : "KALMAN_TEST:0"),
+          { timeout: 2000 }
+        );
+      } catch (_) {
+        try {
+          await BleClient.write(
+            wearableDeviceIdRef.current,
+            SMART_KEY_SERVICE_UUID,
+            COMMAND_CHARACTERISTIC_UUID,
+            textToDataView(enabled ? "KALMAN_TEST:1" : "KALMAN_TEST:0"),
+            { timeout: 2500 }
+          );
+        } catch (err) {
+          console.error("Gagal mengirim KALMAN_TEST mode:", err);
+        }
+      }
+    }
+    addLog({
+      type: "system",
+      status: "Info",
+      message: enabled
+        ? "Mode Uji Komparasi Dual-Buffer Kalman diaktifkan (1x jalan = Dengan vs Tanpa Kalman)"
+        : "Mode Uji Komparasi Dual-Buffer Kalman dinonaktifkan (kembali ke mode standar)",
+    });
+  }, [addLog]);
+
   return (
     <BLEContext.Provider value={{
       connectionState: wearableState, // Backward compatible mapping
@@ -1252,6 +1409,8 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       deleteFlashUser,
       formatFlashMemory,
       flashSyncVersion,
+      kalmanTestMode,
+      setKalmanTestMode,
     }}>
       {children}
     </BLEContext.Provider>
