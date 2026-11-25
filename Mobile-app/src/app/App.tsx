@@ -66,6 +66,7 @@ function AppContent() {
     flashSyncVersion,
     kalmanTestMode,
     setKalmanTestMode,
+    lastSensorGlitch,
   } = useBLE();
   const { showAlert } = useDialog();
   const [sessionState, setSessionState] = useState<SessionState>("idle");
@@ -84,6 +85,7 @@ function AppContent() {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [isCommandBusy, setIsCommandBusy] = useState(false);
   const isCommandBusyRef = useRef(false);
+  const lastHandledGlitchIdRef = useRef<number>(0);
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanTargetType, setScanTargetType] = useState<"wearable" | "doorlock" | "all">("all");
 
@@ -254,6 +256,27 @@ function AppContent() {
     setActiveSession({ mode: null, slot: 0, name: "" });
     resetBleData();
   };
+
+  // Lapis 2: Auto-close & notifikasi jika RP2040 mendeteksi glitch IMU beruntun saat Registrasi/Autentikasi
+  useEffect(() => {
+    if (!lastSensorGlitch || lastSensorGlitch.id === lastHandledGlitchIdRef.current) return;
+    lastHandledGlitchIdRef.current = lastSensorGlitch.id;
+
+    if (sessionState === "scanning" || mode !== null) {
+      setSessionState("idle");
+      setMode(null);
+      setActiveSession({ mode: null, slot: 0, name: "" });
+      resetBleData();
+    }
+
+    showAlert({
+      title: "Gangguan Sensor IMU Terdeteksi",
+      message: lastSensorGlitch.phase === "training"
+        ? "Pembacaan sensor IMU mengalami gangguan beruntun saat registrasi. Sesi dibatalkan otomatis dan profil tidak disimpan. Silakan ulangi registrasi."
+        : "Pembacaan sensor IMU mengalami gangguan beruntun saat autentikasi. Sesi dibatalkan otomatis. Silakan ulangi pemindaian.",
+      type: "warning",
+    });
+  }, [lastSensorGlitch, sessionState, mode, setActiveSession, resetBleData, showAlert]);
 
   // Perbaikan bug mancet 10/10 dan trigger status kunci pintu
   useEffect(() => {
