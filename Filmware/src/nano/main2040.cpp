@@ -25,8 +25,14 @@ float trainingFeaturesBuffer[TARGET_WINDOWS][NUM_FEATURES];
 // Penanda re-advertising aman non-blocking (bebas deadlock SPI)
 volatile bool g_bleNeedsAdvertise = false;
 
-// Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms)
+// Variabel Penanda Waktu Non-Blocking (100 Hz = 10 ms) & Pemantau Glitch IMU
 unsigned long previousSampleTime = 0;
+constexpr uint16_t MAX_CONSECUTIVE_IMU_ERRORS = 30;  // ~300 ms error baca I2C beruntun -> abort sesi
+constexpr uint32_t MAX_IMU_STALL_MS           = 450; // ~450 ms bus I2C macet tanpa update -> abort sesi
+uint16_t consecutiveImuErrors = 0;
+unsigned long sessionStartTimeMs = 0;
+unsigned long lastAccValidMs = 0;
+unsigned long lastGyroValidMs = 0;
 
 // Watchdog Heartbeat Non-Blocking untuk auto-recovery saat hang / SPI deadlock
 // Menggunakan mbed::Ticker & CMSIS NVIC_SystemReset() tanpa mengaktifkan register bootrom watchdog silicon
@@ -90,15 +96,72 @@ void loop() {
     if (currentMillis - previousSampleTime >= IMU_SAMPLE_INTERVAL_MS) {
         previousSampleTime = currentMillis;
 
-        // Gunakan static agar jika bus I2C belum siap pada siklus 10ms ini, nilai fisik terakhir dipertahankan (mencegah drop ke 0.0g)
+        // Lapis 1 (Sample-and-Hold): Gunakan variabel sementara & validasi return + isfinite()
+        // Jika I2C gagal sesaat (1-2 sampel), nilai valid terakhir dipertahankan tanpa meracuni pipeline
         static float ax = 0.0f, ay = 0.0f, az = 1.0f;
         static float gx = 0.0f, gy = 0.0f, gz = 0.0f;
+        bool hadImuReadError = false;
 
         if (IMU.accelerationAvailable()) {
-            IMU.readAcceleration(ax, ay, az);
+            float nax = 0.0f, nay = 0.0f, naz = 0.0f;
+            if (IMU.readAcceleration(nax, nay, naz) == 1 &&
+                isfinite(nax) && isfinite(nay) && isfinite(naz)) {
+                ax = nax;
+                ay = nay;
+                az = naz;
+                lastAccValidMs = currentMillis;
+            } else {
+                hadImuReadError = true;
+            }
         }
         if (IMU.gyroscopeAvailable()) {
-            IMU.readGyroscope(gx, gy, gz);
+            float ngx = 0.0f, ngy = 0.0f, ngz = 0.0f;
+            if (IMU.readGyroscope(ngx, ngy, ngz) == 1 &&
+                isfinite(ngx) && isfinite(ngy) && isfinite(ngz)) {
+                gx = ngx;
+                gy = ngy;
+                gz = ngz;
+                lastGyroValidMs = currentMillis;
+            } else {
+                hadImuReadError = true;
+            }
+        }
+
+        // Lapis 2: Pantau glitch IMU beruntun / macet saat Registrasi maupun Autentikasi aktif
+        if (currentState == STATE_TRAINING || currentState == STATE_AUTHENTICATING) {
+            if (hadImuReadError) {
+                consecutiveImuErrors++;
+            } else {
+                consecutiveImuErrors = 0;
+            }
+
+            bool isStalled = (currentMillis > sessionStartTimeMs) &&
+                             (currentMillis - sessionStartTimeMs > MAX_IMU_STALL_MS) &&
+                             ((currentMillis > lastAccValidMs && currentMillis - lastAccValidMs > MAX_IMU_STALL_MS) ||
+                              (currentMillis > lastGyroValidMs && currentMillis - lastGyroValidMs > MAX_IMU_STALL_MS));
+
+            if (consecutiveImuErrors >= MAX_CONSECUTIVE_IMU_ERRORS || isStalled) {
+                const char *phaseStr = (currentState == STATE_TRAINING) ? "TRAINING" : "AUTH";
+                Serial.print(F("[ERR SENSOR] Glitch IMU beruntun (err="));
+                Serial.print(consecutiveImuErrors);
+                Serial.print(F(") -> Membatalkan sesi "));
+                Serial.println(phaseStr);
+
+                currentState = STATE_IDLE;
+                validWindowCounter = 0;
+                consecutiveImuErrors = 0;
+                featureExtractor.resetSession();
+
+                // Coba pulihkan bus IMU setelah pembatalan aman
+                IMU.begin();
+
+                char glitchMsg[32];
+                snprintf(glitchMsg, sizeof(glitchMsg), "SENSOR_GLITCH:%s", phaseStr);
+                ble.sendDoorCommand(glitchMsg);
+                return;
+            }
+        } else {
+            consecutiveImuErrors = 0;
         }
 
         // 4. Eksekusi Finite State Machine (jalankan sebelum live sample agar nilai Kalman terbaru tersedia)
@@ -205,7 +268,12 @@ void handleIncomingCommands() {
 
             if (currentSlotTarget < MAX_USERS) {
                 validWindowCounter = 0;
-                featureExtractor.resetBuffer();
+                consecutiveImuErrors = 0;
+                unsigned long nowMs = millis();
+                sessionStartTimeMs = nowMs;
+                lastAccValidMs = nowMs;
+                lastGyroValidMs = nowMs;
+                featureExtractor.resetSession();
                 currentState = STATE_TRAINING;
 
                 TelemetryData telem;
@@ -224,12 +292,17 @@ void handleIncomingCommands() {
         }
         // Perintah Mulai Autentikasi Langkah Kaki
         else if (strcmp(cmd, "START_AUTH") == 0) {
-            featureExtractor.resetBuffer();
+            featureExtractor.resetSession();
             for (uint8_t i = 0; i < MAX_USERS; ++i) {
                 ghmm[i].resetInference();
                 rawGhmm[i].resetInference();
             }
             validWindowCounter = 0;
+            consecutiveImuErrors = 0;
+            unsigned long nowMs = millis();
+            sessionStartTimeMs = nowMs;
+            lastAccValidMs = nowMs;
+            lastGyroValidMs = nowMs;
             currentState = STATE_AUTHENTICATING;
 
             TelemetryData telem;
@@ -244,8 +317,9 @@ void handleIncomingCommands() {
         // Perintah Batalkan Sesi Aktif
         else if (strcmp(cmd, "CANCEL") == 0) {
             currentState = STATE_IDLE;
-            featureExtractor.resetBuffer();
+            featureExtractor.resetSession();
             validWindowCounter = 0;
+            consecutiveImuErrors = 0;
             Serial.println(F("[STATE] Sesi Dibatalkan -> Kembali ke Idle"));
         }
         // Perintah Sinkronisasi Status Flash Memori: "SYNC_FLASH" atau "GET_USERS"
@@ -425,28 +499,82 @@ void processTrainingState(float ax, float ay, float az, float gx, float gy, floa
     }
 }
 
-// Fungsi pembanding prefix nama pengguna untuk mengidentifikasi apakah 2 slot milik orang yang sama
-// Contoh: "ridwan jln" dan "ridwan jln cpt" -> kata pertama "ridwan" sama -> return true
-static bool isSameUserPrefix(const char *nameA, const char *nameB) {
-    if (!nameA || !nameB || nameA[0] == '\0' || nameB[0] == '\0') return false;
-    
-    // Cari batas kata pertama (sebelum spasi ' ', underscore '_', atau strip '-')
-    size_t lenA = 0;
-    while (nameA[lenA] && nameA[lenA] != ' ' && nameA[lenA] != '_' && nameA[lenA] != '-') lenA++;
-    
-    size_t lenB = 0;
-    while (nameB[lenB] && nameB[lenB] != ' ' && nameB[lenB] != '_' && nameB[lenB] != '-') lenB++;
-    
-    // Jika kata pertama sama (case-insensitive) dan minimal 2 huruf
-    if (lenA >= 2 && lenA == lenB) {
-        if (strncasecmp(nameA, nameB, lenA) == 0) return true;
+// Helper penalti proporsional linier untuk batas bawah (nilai < safeMin) dan batas atas (nilai > safeMax)
+static inline float rampPenaltyLower(float val, float safeMin, float severeMin, float maxPenalty) {
+    if (val >= safeMin) return 0.0f;
+    if (val <= severeMin) return maxPenalty;
+    return ((safeMin - val) / (safeMin - severeMin)) * maxPenalty;
+}
+
+static inline float rampPenaltyUpper(float val, float safeMax, float severeMax, float maxPenalty) {
+    if (val <= safeMax) return 0.0f;
+    if (val >= severeMax) return maxPenalty;
+    return ((val - safeMax) / (severeMax - safeMax)) * maxPenalty;
+}
+
+struct PhysicalGateResult {
+    float factor;
+    float pJerk;
+    float pExcursion;
+    float pAxis;
+    float pAsym;
+    float pDeviasi;
+    uint8_t deviasiCount;
+    float deltaGyro;
+};
+
+// Evaluasi 5 gerbang kinematika fisik secara proporsional & sadar konteks model pemilik
+static PhysicalGateResult evaluatePhysicalGates(
+    const UserModel &model,
+    const float avgFeatures[NUM_FEATURES],
+    float avgNormJerk,
+    float avgAsym,
+    float avgThighExcursion,
+    float avgCrestFactor,
+    float avgAxisDominance
+) {
+    PhysicalGateResult res;
+    res.deviasiCount = 0;
+
+    float modelAvgGyro = 0.5f * (model.means[0][0] + model.means[1][0]);
+    res.deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
+
+    if (res.deltaGyro > 18.0f) res.deviasiCount++;
+    if (fabsf(avgFeatures[1] - 0.5f * (model.means[0][1] + model.means[1][1])) > 15.0f) res.deviasiCount++;
+    if (fabsf(avgFeatures[2] - 0.5f * (model.means[0][2] + model.means[1][2])) > 20.0f) res.deviasiCount++;
+    if (fabsf(avgFeatures[3] - 0.5f * (model.means[0][3] + model.means[1][3])) > 12.0f) res.deviasiCount++;
+    if (fabsf(avgFeatures[4] - 0.5f * (model.means[0][4] + model.means[1][4])) > 18.0f) res.deviasiCount++;
+
+    // 1. Gerbang NormJerk + Crest Factor (deteksi hentakan kaki vs ayunan mulus)
+    res.pJerk = rampPenaltyLower(avgNormJerk, 0.27f, 0.17f, 0.45f);
+    if (avgNormJerk < 0.27f && avgCrestFactor < 2.10f) {
+        res.pJerk = fminf(0.55f, res.pJerk + 0.10f);
     }
-    
-    // Jika salah satu nama adalah awalan penuh dari nama lainnya (misal "ridwan" vs "ridwan_cepat")
-    size_t minLen = (strlen(nameA) < strlen(nameB)) ? strlen(nameA) : strlen(nameB);
-    if (minLen >= 3 && strncasecmp(nameA, nameB, minLen) == 0) return true;
-    
-    return false;
+
+    // 2. Gerbang ThighExcursion (speed-aware & impact-aware untuk profil pelan/halus vs saku jaket)
+    float excSafe = (modelAvgGyro < 45.0f || (avgCrestFactor >= 3.0f && avgNormJerk >= 0.35f)) ? 24.0f : 28.0f;
+    res.pExcursion = rampPenaltyLower(avgThighExcursion, excSafe, 16.0f, 0.45f);
+
+    // 3. Gerbang AxisDominance (pendulum 1 sumbu ekstrem vs gerak paha 3D)
+    res.pAxis = rampPenaltyUpper(avgAxisDominance, 0.85f, 0.95f, 0.45f);
+
+    // 4. Gerbang Swing-Stance Asymmetry (asimetri langkah vs ayunan simetris torso/tangan)
+    res.pAsym = rampPenaltyLower(avgAsym, 1.32f, 1.12f, 0.30f);
+
+    // 5. Gerbang Deviasi 5 Fitur & DeltaGyro (penalti lembut, pelengkap jarak Mahalanobis GHMM)
+    float pDevCount = 0.0f;
+    if (res.deviasiCount == 2) pDevCount = 0.10f;
+    else if (res.deviasiCount == 3) pDevCount = 0.22f;
+    else if (res.deviasiCount >= 4) pDevCount = 0.35f;
+    float pDeltaGyro = rampPenaltyUpper(res.deltaGyro, 22.0f, 38.0f, 0.25f);
+    res.pDeviasi = 1.0f - (1.0f - pDevCount) * (1.0f - pDeltaGyro);
+
+    res.factor = (1.0f - res.pJerk) *
+                 (1.0f - res.pExcursion) *
+                 (1.0f - res.pAxis) *
+                 (1.0f - res.pAsym) *
+                 (1.0f - res.pDeviasi);
+    return res;
 }
 
 // Fase Autentikasi Harian Real-Time (Edge AI Inference Multi-User GHMM)
@@ -463,8 +591,6 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
         int bestUserIdx = -1;
         float bestConfidence = -1.0f;
         float bestLogProb = -999.0f;
-        int runnerUpUserIdx = -1;
-        float runnerUpConfidence = -1.0f;
         float userScores[MAX_USERS];
         for (uint8_t i = 0; i < MAX_USERS; ++i) {
             userScores[i] = -1.0f;
@@ -490,15 +616,13 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
         float rawBestLogProb = -999.0f;
 
         // Variabel evaluasi gerbang fisik sesi
-        bool isKinematicallyValid = true;
-        bool isPantsPocketPlacement = true;
+        PhysicalGateResult bestGateResult = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0.0f};
         float avgFeatures[NUM_FEATURES] = {0};
         float avgThighExcursion = 0.0f;
         float avgCrestFactor = 0.0f;
         float avgAxisDominance = 0.0f;
         float avgNormJerk = 0.0f;
         float avgAsym = 0.0f;
-        uint8_t deviasiCount = 0;
         float deltaGyro = 0.0f;
 
         if (isWalking) {
@@ -575,21 +699,16 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     float conf = ghmm[i].calculateConfidenceScore(logProb);
                     userScores[i] = conf;
                     if (conf > bestConfidence) {
-                        runnerUpConfidence = bestConfidence;
-                        runnerUpUserIdx = bestUserIdx;
                         bestConfidence = conf;
                         bestLogProb = logProb;
                         bestUserIdx = i;
-                    } else if (conf > runnerUpConfidence) {
-                        runnerUpConfidence = conf;
-                        runnerUpUserIdx = i;
                     }
                 }
             }
 
             if (bestUserIdx >= 0) {
 
-                // Pada jendela ke-5 (selesai), evaluasi gerbang kinematika fisik & penempatan saku
+                // Pada jendela ke-5 (selesai), evaluasi gerbang kinematika fisik proporsional per profil
                 if (validWindowCounter >= TARGET_WINDOWS) {
                     float steadyDiv = (validWindowCounter >= 2) ? (float)(validWindowCounter - 1) : 1.0f;
                     for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
@@ -601,40 +720,32 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     avgNormJerk = sessionNormJerkSum / steadyDiv;
                     avgAsym = sessionAsymSum / steadyDiv;
 
-                    float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
-                    deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
-
-                    deviasiCount = 0;
-                    if (deltaGyro > 18.0f) deviasiCount++;
-                    if (fabsf(avgFeatures[1] - 0.5f * (activeUsers[bestUserIdx].means[0][1] + activeUsers[bestUserIdx].means[1][1])) > 15.0f) deviasiCount++;
-                    if (fabsf(avgFeatures[2] - 0.5f * (activeUsers[bestUserIdx].means[0][2] + activeUsers[bestUserIdx].means[1][2])) > 20.0f) deviasiCount++;
-                    if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
-                    if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
-
-                    // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas - Calibrated)
-                    // Ayunan tangan bebas di udara:
-                    // 1) Memiliki dominansi sumbu tunggal pendulum ekstrem (> 0.88, empiris ayun tangan: 0.94 - 0.97)
-                    // 2) Tidak memiliki hentakan mekanis tapak kaki / heel-strike ke tanah (NormJerk < 0.28, empiris ayun: 0.19 - 0.25)
-                    bool isHandSwing = (avgAxisDominance > 0.88f) || (avgNormJerk < 0.28f);
-                    isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f) && !isHandSwing;
-
-                    // Gerbang Penempatan Saku Celana (Anti-Saku Jaket / Torso - Calibrated)
-                    // Saku jaket di torso memiliki ekskursi ayunan sangat sempit (< 30.0 deg, empiris torso: 19 - 29 deg).
-                    // Gerakan paha melangkah sejati memiliki ekskursi lebar (> 40.0 deg, teman/Rein mencapai 82 - 89 deg).
-                    bool isTorsoJacket = (avgThighExcursion < 30.0f) || 
-                                         (avgThighExcursion < 35.0f && avgAsym < 1.35f);
-                    isPantsPocketPlacement = !isTorsoJacket;
-
-                    // Fused Kinematic & Placement Penalization:
-                    // Jika terjadi veto kinematika atau penempatan non-gait, jatuhkan SELURUH skor slot kandidat ke < 28%
-                    // agar tidak ada profil yang menampilkan persentase tinggi saat ayun tangan atau saku jaket
-                    if (!isKinematicallyValid || !isPantsPocketPlacement) {
-                        for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                            if (activeUsers[i].isRegistered) {
-                                userScores[i] = fminf(userScores[i] * 0.30f, 28.0f);
+                    float newBestConf = -1.0f;
+                    int newBestIdx = bestUserIdx;
+                    for (uint8_t i = 0; i < MAX_USERS; ++i) {
+                        if (activeUsers[i].isRegistered) {
+                            PhysicalGateResult gateRes = evaluatePhysicalGates(
+                                activeUsers[i],
+                                avgFeatures,
+                                avgNormJerk,
+                                avgAsym,
+                                avgThighExcursion,
+                                avgCrestFactor,
+                                avgAxisDominance
+                            );
+                            userScores[i] *= gateRes.factor;
+                            if (userScores[i] > newBestConf) {
+                                newBestConf = userScores[i];
+                                newBestIdx = i;
+                                bestGateResult = gateRes;
                             }
                         }
-                        bestConfidence = fminf(bestConfidence * 0.30f, 28.0f);
+                    }
+
+                    if (newBestIdx >= 0) {
+                        bestUserIdx = newBestIdx;
+                        bestConfidence = newBestConf;
+                        deltaGyro = bestGateResult.deltaGyro;
                     }
                 }
 
@@ -698,10 +809,7 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                     float avgJerkRed = kJerkRedSum / kDiv;
                     float avgRmse = kRmseSum / kDiv;
                     float avgLat = kLatSum / kDiv;
-                    float rawConfFinal = (rawBestUserIdx >= 0) ? rawBestConfidence : 0.0f;
-                    if (!isKinematicallyValid || !isPantsPocketPlacement) {
-                        rawConfFinal = fminf(rawConfFinal * 0.30f, 28.0f);
-                    }
+                    float rawConfFinal = (rawBestUserIdx >= 0) ? (rawBestConfidence * bestGateResult.factor) : 0.0f;
 
                     char kcmp1[64];
                     snprintf(kcmp1, sizeof(kcmp1), "KCMP1:%.1f|%.1f|%.2f|%.2f|%.1f|%.2f",
@@ -727,118 +835,37 @@ void processAuthenticationState(float ax, float ay, float az, float gx, float gy
                 Serial.print(F(" | AxisDom: "));
                 Serial.print(avgAxisDominance, 2);
                 Serial.print(F(" | DeltaGyro: "));
-                Serial.println(deltaGyro, 1);
+                Serial.print(deltaGyro, 1);
+                Serial.print(F(" | GateFactor: "));
+                Serial.println(bestGateResult.factor, 2);
 
-                // 1. Cek Margin Separasi terhadap runner-up (dikecualikan jika pemilik sama)
-                float maxForeignConfidence = -1.0f;
-                int foreignUserIdx = -1;
-                for (uint8_t i = 0; i < MAX_USERS; ++i) {
-                    if (activeUsers[i].isRegistered && (int)i != bestUserIdx) {
-                        if (!isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[i].userName)) {
-                            if (userScores[i] > maxForeignConfidence) {
-                                maxForeignConfidence = userScores[i];
-                                foreignUserIdx = i;
-                            }
-                        }
-                    }
-                }
-
-                bool isRunnerUpSameUser = (runnerUpUserIdx >= 0) && 
-                    isSameUserPrefix(activeUsers[bestUserIdx].userName, activeUsers[runnerUpUserIdx].userName);
-
-                bool hasCleanMargin = false;
-                if (isRunnerUpSameUser) {
-                    hasCleanMargin = (maxForeignConfidence < 0.0f) || ((bestConfidence - maxForeignConfidence) >= SEPARATION_MARGIN_MIN);
-                } else {
-                    hasCleanMargin = (runnerUpConfidence < 0.0f) || ((bestConfidence - runnerUpConfidence) >= SEPARATION_MARGIN_MIN);
-                }
-
-                // 2. Evaluasi Rata-Rata Kinematika Sesi Uji vs Model Golden Pemenang (Steady-State Windows 2 s.d. 5)
-                float steadyDiv = (validWindowCounter >= 2) ? (float)(validWindowCounter - 1) : 1.0f;
-                for (uint8_t d = 0; d < NUM_FEATURES; ++d) {
-                    avgFeatures[d] = sessionFeaturesSum[d] / steadyDiv;
-                }
-                avgThighExcursion = sessionThighExcursionSum / steadyDiv;
-                avgCrestFactor = sessionCrestFactorSum / steadyDiv;
-                avgAxisDominance = sessionAxisDominanceSum / steadyDiv;
-                avgNormJerk = sessionNormJerkSum / steadyDiv;
-                avgAsym = sessionAsymSum / steadyDiv;
-
-                float modelAvgGyro = 0.5f * (activeUsers[bestUserIdx].means[0][0] + activeUsers[bestUserIdx].means[1][0]);
-                deltaGyro = fabsf(avgFeatures[0] - modelAvgGyro);
-
-                deviasiCount = 0;
-                if (deltaGyro > 18.0f) deviasiCount++;
-                if (fabsf(avgFeatures[1] - 0.5f * (activeUsers[bestUserIdx].means[0][1] + activeUsers[bestUserIdx].means[1][1])) > 15.0f) deviasiCount++;
-                if (fabsf(avgFeatures[2] - 0.5f * (activeUsers[bestUserIdx].means[0][2] + activeUsers[bestUserIdx].means[1][2])) > 20.0f) deviasiCount++;
-                if (fabsf(avgFeatures[3] - 0.5f * (activeUsers[bestUserIdx].means[0][3] + activeUsers[bestUserIdx].means[1][3])) > 12.0f) deviasiCount++;
-                if (fabsf(avgFeatures[4] - 0.5f * (activeUsers[bestUserIdx].means[0][4] + activeUsers[bestUserIdx].means[1][4])) > 18.0f) deviasiCount++;
-
-                // Gerbang Kinematika Fisik (Anti-Ayun Tangan Bebas - Calibrated)
-                bool isHandSwing = (avgAxisDominance > 0.88f) || (avgNormJerk < 0.28f);
-                isKinematicallyValid = (deviasiCount < 2) && (deltaGyro <= 22.0f) && !isHandSwing;
-
-                // Gerbang Penempatan Celana Ketat (Anti-Saku Jaket / Torso - Calibrated)
-                bool isTorsoJacket = (avgThighExcursion < 30.0f) || 
-                                     (avgThighExcursion < 35.0f && avgAsym < 1.35f);
-                isPantsPocketPlacement = !isTorsoJacket;
-
-                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && hasCleanMargin && isKinematicallyValid && isPantsPocketPlacement) {
+                // Keputusan tunggal & selaras dengan skor akhir (penalti fisik sudah terintegrasi ke bestConfidence)
+                if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD) {
                     Serial.print(F("[AUTH] Autentikasi SAH untuk: "));
                     Serial.print(activeUsers[bestUserIdx].userName);
-                    Serial.print(F(" (Skor: "));
-                    Serial.print(bestConfidence);
-                    Serial.print(F("%, Runner-up: "));
-                    Serial.print(runnerUpConfidence);
-                    if (isRunnerUpSameUser && foreignUserIdx >= 0) {
-                        Serial.print(F("%, Foreign Runner-up: "));
-                        Serial.print(maxForeignConfidence);
-                    }
+                    Serial.print(F(" (Skor Akhir: "));
+                    Serial.print(bestConfidence, 1);
                     Serial.println(F("%)"));
 
                     char doorMsg[64];
                     snprintf(doorMsg, sizeof(doorMsg), "OPEN_DOOR:%s", activeUsers[bestUserIdx].userName);
                     ble.sendDoorCommand(doorMsg);
-                } else if (!isKinematicallyValid) {
-                    Serial.print(F("[AUTH VETO] Ditolak: Gerakan Ayun Tangan Bebas / Kinematika Abnormal (Jerk: "));
-                    Serial.print(avgNormJerk, 3);
-                    Serial.print(F(", AxisDom: "));
-                    Serial.print(avgAxisDominance, 2);
-                    Serial.print(F(", Deviasi: "));
-                    Serial.print(deviasiCount);
-                    Serial.print(F(" fitur, Gyro Delta: "));
-                    Serial.print(deltaGyro, 1);
-                    Serial.println(F(" deg/s)"));
-                    ble.sendDoorCommand("ACCESS_DENIED");
-                } else if (!isPantsPocketPlacement) {
-                    Serial.print(F("[AUTH VETO] Ditolak: Penempatan Saku Jaket / Torso (Ayunan Paha: "));
-                    Serial.print(avgThighExcursion, 1);
-                    Serial.print(F(" deg, Asym: "));
-                    Serial.print(avgAsym, 2);
-                    Serial.print(F(", Dominansi Sumbu: "));
-                    Serial.print(avgAxisDominance, 2);
-                    Serial.print(F(", Crest: "));
-                    Serial.print(avgCrestFactor, 2);
-                    Serial.println(F(")"));
-                    ble.sendDoorCommand("ACCESS_DENIED");
-                } else if (bestConfidence >= CONFIDENCE_HIGH_THRESHOLD && !hasCleanMargin) {
-                    Serial.print(F("[AUTH AMBIGU] Akses Ditolak: Skor bersaing ketat dengan profil lain"));
-                    if (isRunnerUpSameUser && foreignUserIdx >= 0) {
-                        Serial.print(F(" (Slot Foreign "));
-                        Serial.print(foreignUserIdx);
-                        Serial.print(F(" @ "));
-                        Serial.print(maxForeignConfidence);
-                        Serial.println(F("%)"));
-                    } else {
-                        Serial.print(F(" (Slot "));
-                        Serial.print(runnerUpUserIdx);
-                        Serial.print(F(" @ "));
-                        Serial.print(runnerUpConfidence);
-                        Serial.println(F("%)"));
-                    }
-                    ble.sendDoorCommand("ACCESS_DENIED");
                 } else {
-                    Serial.println(F("[AUTH] Akses Ditolak: Pola Langkah Tidak Cocok!"));
+                    Serial.print(F("[AUTH] Akses Ditolak (Skor Akhir: "));
+                    Serial.print(bestConfidence, 1);
+                    Serial.print(F("%, Factor: "));
+                    Serial.print(bestGateResult.factor, 2);
+                    Serial.print(F(" | pJ="));
+                    Serial.print(bestGateResult.pJerk, 2);
+                    Serial.print(F(" pEx="));
+                    Serial.print(bestGateResult.pExcursion, 2);
+                    Serial.print(F(" pAx="));
+                    Serial.print(bestGateResult.pAxis, 2);
+                    Serial.print(F(" pAs="));
+                    Serial.print(bestGateResult.pAsym, 2);
+                    Serial.print(F(" pDev="));
+                    Serial.print(bestGateResult.pDeviasi, 2);
+                    Serial.println(F(")"));
                     ble.sendDoorCommand("ACCESS_DENIED");
                 }
             } else {

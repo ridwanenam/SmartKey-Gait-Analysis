@@ -163,6 +163,22 @@ public:
         bufferIndex = 0;
     }
 
+    // Reset state internal Filter Kalman (mencegah kontaminasi nilai antar sesi)
+    void resetFilters() {
+        kalmanGx = SimpleKalmanFilter(0.001f, 0.002f, 0.001f);
+        kalmanGy = SimpleKalmanFilter(0.001f, 0.002f, 0.001f);
+        kalmanGz = SimpleKalmanFilter(0.001f, 0.002f, 0.001f);
+        latestRawGyroMag = 0.0f;
+        latestKalmanGyroMag = 0.0f;
+        kalmanLastLatencyUs = 0.0f;
+    }
+
+    // Reset penuh untuk memulai atau membatalkan sesi (buffer + Filter Kalman)
+    void resetSession() {
+        resetBuffer();
+        resetFilters();
+    }
+
     // Geser buffer secara bertahap (Sliding Window dengan 50% Overlap)
     void slideBuffer(uint16_t step = WINDOW_STEP) {
         if (step >= WINDOW_SIZE) {
@@ -179,6 +195,12 @@ public:
 
     // Memasukkan 1 sampel data mentah IMU (akselerometer & giroskop), menyaring noise via Kalman, dan menyimpan ke dual buffer
     bool addSample(float ax, float ay, float az, float gx, float gy, float gz) {
+        // Lapis 1: Tolak sampel non-finite sebelum menyentuh Kalman maupun buffer
+        if (!isfinite(ax) || !isfinite(ay) || !isfinite(az) ||
+            !isfinite(gx) || !isfinite(gy) || !isfinite(gz)) {
+            return (bufferIndex >= WINDOW_SIZE);
+        }
+
         // Simpan giroskop mentah murni (tanpa deadband/Kalman) untuk jalur komparasi uji Kalman
         float rawGx = gx;
         float rawGy = gy;
@@ -196,6 +218,14 @@ public:
         float filteredY = kalmanGy.updateEstimate(deadGy);
         float filteredZ = kalmanGz.updateEstimate(deadGz);
         kalmanLastLatencyUs = (float)(micros() - t0);
+
+        // Auto-heal Filter Kalman jika terdeteksi non-finite
+        if (!isfinite(filteredX) || !isfinite(filteredY) || !isfinite(filteredZ)) {
+            resetFilters();
+            filteredX = deadGx;
+            filteredY = deadGy;
+            filteredZ = deadGz;
+        }
         latestKalmanGyroMag = sqrtf(filteredX * filteredX + filteredY * filteredY + filteredZ * filteredZ);
 
         // 3. Hitung magnitudo akselerasi skalar dan kurangi komponen gravitasi bumi 1.0g (100% Orientation Invariant)

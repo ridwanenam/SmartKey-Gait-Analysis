@@ -27,7 +27,6 @@ constexpr uint8_t NUM_STATES         = 2;                            // Jumlah h
 constexpr uint8_t NUM_FEATURES       = 5;                            // 5 Fitur: Mean, Var, Stride Regularity, Stride Period (k_peak), Heel-Strike Impact
 constexpr float   BASE_LOG_THRESHOLD = -20.0f;                       // Ambang batas dasar log-likelihood ternormalisasi (Length-Normalized LL)
 constexpr float   CONFIDENCE_HIGH_THRESHOLD = 80.0f;                 // Ambang batas CIR minimal lolos akses (%)
-constexpr float   SEPARATION_MARGIN_MIN      = 3.0f;                 // Ambang batas margin separasi minimal antar profil pemilik berbeda (%)
 
 // ==========================================
 // 4. PROTOKOL BLUETOOTH LOW ENERGY (BLE)
