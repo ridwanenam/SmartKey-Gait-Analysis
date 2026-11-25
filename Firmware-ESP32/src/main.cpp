@@ -17,11 +17,11 @@ constexpr uint8_t RELAY_PIN         = 15;   // GPIO15 (D15) terhubung ke pin IN 
 constexpr uint8_t LED_INDICATOR     = 2;    // Built-in LED ESP32 (indikator visual status pintu)
 
 // Level logika trigger relay:
-// Sebagian besar modul relay (1-channel / optocoupler) bertipe ACTIVE-LOW (Low-Level Trigger):
-// - LOW  = Relay AKTIF (Lampu indikator kuning/merah MENYALA, Solenoid terbuka)
-// - HIGH = Relay MATI  (Lampu indikator MATI, Solenoid terkunci)
-#define RELAY_ACTIVE_LEVEL          LOW
-#define RELAY_INACTIVE_LEVEL        HIGH
+// Disesuaikan dengan kondisi hardware saat ini (Active-HIGH / switch aktif saat HIGH):
+// - HIGH = Relay/Solenoid AKTIF -> PINTU TERBUKA (UNLOCKED)
+// - LOW  = Relay/Solenoid MATI  -> PINTU TERKUNCI (LOCKED)
+#define RELAY_ACTIVE_LEVEL          HIGH
+#define RELAY_INACTIVE_LEVEL        LOW
 
 // Mode Operasi: Pure Manual Lock (Tidak ada auto-relock timer 5 detik, penguncian murni manual)
 
@@ -155,21 +155,19 @@ class DoorCharCallbacks : public BLECharacteristicCallbacks {
 // 6. SETUP PROGRAM
 // ==============================================================================
 void setup() {
+    // Failsafe Awal: Segera pastikan relay/solenoid dalam keadaan TERKUNCI saat boot
+    pinMode(RELAY_PIN, OUTPUT);
+    pinMode(LED_INDICATOR, OUTPUT);
+    digitalWrite(RELAY_PIN, RELAY_INACTIVE_LEVEL);
+    digitalWrite(LED_INDICATOR, LOW);
+    isDoorUnlocked = false;
+
     Serial.begin(115200);
     delay(1000);
 
     Serial.println(F("=================================================="));
     Serial.println(F("   SMARTKEY GAIT ANALYSIS - ESP32 DOOR RECEIVER   "));
     Serial.println(F("=================================================="));
-
-    // 1. Inisialisasi GPIO Hardware
-    pinMode(RELAY_PIN, OUTPUT);
-    pinMode(LED_INDICATOR, OUTPUT);
-
-    // Failsafe Awal: Selalu pastikan solenoid dalam keadaan TERKUNCI saat boot
-    digitalWrite(RELAY_PIN, RELAY_INACTIVE_LEVEL);
-    digitalWrite(LED_INDICATOR, LOW);
-    isDoorUnlocked = false;
 
     Serial.print(F("[HARDWARE] Relay Solenoid diinisialisasi pada GPIO"));
     Serial.println(RELAY_PIN);
