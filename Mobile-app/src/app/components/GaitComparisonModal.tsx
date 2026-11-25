@@ -10,7 +10,6 @@ import {
   ShieldCheck,
   XCircle,
   CheckCircle2,
-  AlertCircle,
   Cpu,
   Layers,
   ZoomIn,
@@ -456,50 +455,18 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
     return result.sort((a, b) => b.score - a.score);
   }, [currentHead, headParsed.scoresBreakdown, baseSlots, selectedBaseSlot]);
 
-  // Margin Separasi antara Best Match dan Runner-up (dengan pengecualian Intra-User pemilik yang sama)
-  const headMarginInfo = useMemo(() => {
-    if (headEvaluatedSlots.length < 2) return null;
+  // Evaluasi status kelulusan ambang batas (≥ 80.0%) dan kandidat skor tertinggi
+  const headThresholdInfo = useMemo(() => {
+    if (headEvaluatedSlots.length === 0) return null;
     const best = headEvaluatedSlots[0];
-    const immediateRunnerUp = headEvaluatedSlots[1];
-
-    const isSamePrefix = (nameA: string, nameB: string) => {
-      if (!nameA || !nameB) return false;
-      const tokenA = nameA.trim().split(/[\s_\-]+/)[0].toLowerCase();
-      const tokenB = nameB.trim().split(/[\s_\-]+/)[0].toLowerCase();
-      if (tokenA.length >= 3 && tokenA === tokenB) return true;
-      const minLen = Math.min(nameA.length, nameB.length);
-      if (minLen >= 4 && nameA.substring(0, minLen).toLowerCase() === nameB.substring(0, minLen).toLowerCase()) return true;
-      return false;
-    };
-
-    const isIntraUser = isSamePrefix(best.name, immediateRunnerUp.name);
-    // Cari runner-up eksternal (profil pengguna lain)
-    const foreignSlots = headEvaluatedSlots.slice(1).filter((s) => !isSamePrefix(best.name, s.name));
-    const closestForeign = foreignSlots.length > 0 ? foreignSlots[0] : null;
-
-    let margin = 0;
-    let isSafe = false;
-
-    if (isIntraUser) {
-      if (closestForeign) {
-        margin = parseFloat((best.score - closestForeign.score).toFixed(1));
-        isSafe = margin >= 3.0;
-      } else {
-        margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
-        isSafe = true; // Tidak ada pengguna asing yang bersaing
-      }
-    } else {
-      margin = parseFloat((best.score - immediateRunnerUp.score).toFixed(1));
-      isSafe = margin >= 3.0;
-    }
+    const passingCount = headEvaluatedSlots.filter((s) => s.score >= 80.0).length;
+    const isPassed = best.score >= 80.0;
 
     return {
       best,
-      runnerUp: immediateRunnerUp,
-      closestForeign,
-      isIntraUser,
-      margin,
-      isSafe,
+      passingCount,
+      totalCount: headEvaluatedSlots.length,
+      isPassed,
     };
   }, [headEvaluatedSlots]);
 
@@ -993,7 +960,7 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
       ctx.fillStyle = "#94A3B8";
       ctx.font = "8px monospace";
       ctx.fillText(`Ambang Adaptif: ${headParsed.summary?.adaptiveThreshold ?? "0.15g"} | Deviasi Sesi: ${sessionDeviations.count}/5 Fitur | ZUPT: ${headParsed.steps.filter((s) => s.status !== "FAILED").length}/5`, 38, 424);
-      ctx.fillText(`Likelihood: ${headParsed.summary?.logLikelihood ?? "-18.2"} | Margin: +${headMarginInfo?.margin ?? 0}% | Evaluasi: Rerata 5 Jendela`, 38, 438);
+      ctx.fillText(`Likelihood: ${headParsed.summary?.logLikelihood ?? "-18.2"} | Kandidat Teratas: ${headThresholdInfo ? `${headThresholdInfo.best.score.toFixed(1)}%` : "—"} | Evaluasi: Rerata 5 Jendela`, 38, 438);
 
       // BOX 2: BREAKDOWN CIR MULTICLASS (x: 20, y: 464, w: 430, h: 342)
       drawRoundRect(20, 464, 430, 342, 12, "#131D31", "#334155", 1);
@@ -1065,35 +1032,38 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
         ctx.stroke();
       });
 
-      const marginBoxY = 730;
-      if (headMarginInfo) {
-        drawRoundRect(30, marginBoxY, 410, 64, 6, headMarginInfo.isSafe ? "#052E16" : "#451A03", headMarginInfo.isSafe ? "#10B981" : "#F59E0B", 1);
-        ctx.fillStyle = headMarginInfo.isSafe ? "#4ADE80" : "#FBBF24";
+      const statusBoxY = 730;
+      if (headThresholdInfo) {
+        drawRoundRect(30, statusBoxY, 410, 64, 6, headThresholdInfo.isPassed ? "#052E16" : "#450A0A", headThresholdInfo.isPassed ? "#10B981" : "#EF4444", 1);
+        ctx.fillStyle = headThresholdInfo.isPassed ? "#4ADE80" : "#F87171";
         ctx.font = "bold 10px monospace";
-        const tag = headMarginInfo.isIntraUser 
-          ? (headMarginInfo.isSafe ? "AMAN (Intra-User)" : "TIPIS < 3.0%") 
-          : (headMarginInfo.isSafe ? "AMAN ≥ 3.0%" : "TIPIS < 3.0%");
-        ctx.fillText(`Margin Separasi Biometrik: +${headMarginInfo.margin}% (${tag})`, 40, marginBoxY + 18);
+        ctx.fillText(
+          headThresholdInfo.isPassed ? "STATUS KELULUSAN: LOLOS (≥ 80.0%)" : "STATUS KELULUSAN: DITOLAK (< 80.0%)",
+          40,
+          statusBoxY + 18
+        );
 
         ctx.fillStyle = "#E2E8F0";
         ctx.font = "9px sans-serif";
-        if (headMarginInfo.isIntraUser) {
-          ctx.fillText(`Unggul: ${headMarginInfo.best.name} (${headMarginInfo.best.score.toFixed(1)}%) vs Intra: ${headMarginInfo.runnerUp.name} (${headMarginInfo.runnerUp.score.toFixed(1)}%)`, 40, marginBoxY + 34);
-        } else {
-          ctx.fillText(`Unggul: ${headMarginInfo.best.name} (${headMarginInfo.best.score.toFixed(1)}%) vs Runner-up: ${headMarginInfo.runnerUp.name} (${headMarginInfo.runnerUp.score.toFixed(1)}%)`, 40, marginBoxY + 34);
-        }
+        ctx.fillText(
+          `Kandidat Skor Tertinggi: ${headThresholdInfo.best.name} (${headThresholdInfo.best.score.toFixed(1)}%)`,
+          40,
+          statusBoxY + 34
+        );
         ctx.fillStyle = "#94A3B8";
         ctx.font = "8px monospace";
-        if (headMarginInfo.isIntraUser) {
-          ctx.fillText(headMarginInfo.isSafe ? "Profil sejenis dikecualikan dari sanksi penolakan separasi persaingan." : "Perlu diwaspadai jika gaya jalan mendekati profil lain.", 40, marginBoxY + 50);
-        } else {
-          ctx.fillText(headMarginInfo.isSafe ? "Pembedaan antar profil pemilik berlangsung solid dan tegas." : "Perlu diwaspadai jika gaya jalan pengguna mendekati profil lain.", 40, marginBoxY + 50);
-        }
+        ctx.fillText(
+          headThresholdInfo.isPassed
+            ? `${headThresholdInfo.passingCount} dari ${headThresholdInfo.totalCount} profil terdaftar mencapai ambang batas ≥ 80.0%.`
+            : "Tidak ada satu pun profil terdaftar yang mencapai ambang batas 80.0%.",
+          40,
+          statusBoxY + 50
+        );
       } else {
-        drawRoundRect(30, marginBoxY, 410, 64, 6, "#0F172A", "#1E293B", 1);
+        drawRoundRect(30, statusBoxY, 410, 64, 6, "#0F172A", "#1E293B", 1);
         ctx.fillStyle = "#94A3B8";
         ctx.font = "10px monospace";
-        ctx.fillText("Hanya 1 profil terdaftar yang aktif dievaluasi.", 40, marginBoxY + 36);
+        ctx.fillText("Belum ada profil terdaftar yang dievaluasi.", 40, statusBoxY + 36);
       }
 
       // 4. Kolom Kanan: Box 3 (Osiloskop Overlay) & Box 4 (Jendela 1 s.d. 5)
@@ -2069,16 +2039,18 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                       <p style={{ color: "#64748B", fontFamily: MONO, fontSize: "0.58rem" }}>
                         Daftar Profil Pengguna yang Dievaluasi:
                       </p>
-                      {headMarginInfo && (
+                      {headThresholdInfo && (
                         <span
                           className={`px-2 py-0.5 rounded text-[0.55rem] font-bold ${
-                            headMarginInfo.isSafe
+                            headThresholdInfo.isPassed
                               ? "bg-green-50 text-green-700 border border-green-200"
-                              : "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-red-50 text-red-700 border border-red-200"
                           }`}
                           style={{ fontFamily: MONO }}
                         >
-                          Margin Separasi: +{headMarginInfo.margin}% ({headMarginInfo.isIntraUser ? (headMarginInfo.isSafe ? "Aman (Intra-User)" : "Tipis") : (headMarginInfo.isSafe ? "Aman" : "Tipis")})
+                          {headThresholdInfo.isPassed
+                            ? `Lolos ≥ 80% · Teratas: ${headThresholdInfo.best.name} (${headThresholdInfo.best.score.toFixed(1)}%)`
+                            : `Gagal < 80% · Tertinggi: ${headThresholdInfo.best.score.toFixed(1)}%`}
                         </span>
                       )}
                     </div>
@@ -2173,31 +2145,28 @@ export function GaitComparisonModal({ open, onClose }: GaitComparisonModalProps)
                       )}
                     </div>
 
-                    {/* Box info separasi margin */}
-                    {headMarginInfo && (
+                    {/* Box info status kelulusan & kandidat tertinggi */}
+                    {headThresholdInfo && (
                       <div
                         className="p-2.5 rounded-lg border flex items-start gap-2"
                         style={{
-                          background: headMarginInfo.isSafe ? "#F0FDF4" : "#FFFBEB",
-                          borderColor: headMarginInfo.isSafe ? "#BBF7D0" : "#FDE68A",
+                          background: headThresholdInfo.isPassed ? "#F0FDF4" : "#FEF2F2",
+                          borderColor: headThresholdInfo.isPassed ? "#BBF7D0" : "#FECACA",
                         }}
                       >
-                        <div className={`mt-0.5 ${headMarginInfo.isSafe ? "text-green-600" : "text-amber-600"}`}>
-                          {headMarginInfo.isSafe ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                        <div className={`mt-0.5 ${headThresholdInfo.isPassed ? "text-green-600" : "text-red-600"}`}>
+                          {headThresholdInfo.isPassed ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
                         </div>
                         <div className="text-[0.55rem] space-y-0.5" style={{ fontFamily: MONO }}>
-                          <p className="font-bold" style={{ color: headMarginInfo.isSafe ? "#166534" : "#92400E" }}>
-                            {headMarginInfo.isSafe
-                              ? `Separasi Biometrik Aman (+${headMarginInfo.margin}%)`
-                              : `Separasi Biometrik Tipis (+${headMarginInfo.margin}%)`}
+                          <p className="font-bold" style={{ color: headThresholdInfo.isPassed ? "#166534" : "#991B1B" }}>
+                            {headThresholdInfo.isPassed
+                              ? `Status Lulus Ambang ≥ 80.0% (${headThresholdInfo.best.name})`
+                              : `Status Ditolak: Semua Skor < 80.0%`}
                           </p>
-                          <p style={{ color: headMarginInfo.isSafe ? "#15803D" : "#B45309" }}>
-                            Kandidat teratas ({headMarginInfo.best.name}: {headMarginInfo.best.score.toFixed(1)}%) unggul{" "}
-                            +{headMarginInfo.margin}% di atas runner-up ({headMarginInfo.runnerUp.name}:{" "}
-                            {headMarginInfo.runnerUp.score.toFixed(1)}%).{" "}
-                            {headMarginInfo.isSafe
-                              ? "Pembedaan antar profil pemilik berlangsung solid dan tegas."
-                              : "Perlu diwaspadai jika ciri gaya jalan mendekati profil lain."}
+                          <p style={{ color: headThresholdInfo.isPassed ? "#15803D" : "#B91C1C" }}>
+                            {headThresholdInfo.isPassed
+                              ? `Kandidat skor tertinggi: ${headThresholdInfo.best.name} (${headThresholdInfo.best.score.toFixed(1)}%). ${headThresholdInfo.passingCount} dari ${headThresholdInfo.totalCount} profil terdaftar mencapai ambang batas ≥ 80.0%.`
+                              : `Skor tertinggi tercatat ${headThresholdInfo.best.score.toFixed(1)}% (${headThresholdInfo.best.name}). Tidak ada satu pun profil terdaftar yang mencapai ambang batas 80.0%.`}
                           </p>
                         </div>
                       </div>

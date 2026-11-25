@@ -119,6 +119,7 @@ interface BLEContextType {
   flashSyncVersion: number;
   kalmanTestMode: boolean;
   setKalmanTestMode: (enabled: boolean) => Promise<void>;
+  lastSensorGlitch: { id: number; phase: "auth" | "training" } | null;
 }
 
 const defaultBLEData: BLEData = {
@@ -207,6 +208,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
   const [kalmanTestMode, setKalmanTestModeState] = useState<boolean>(false);
   const kalmanTestModeRef = useRef<boolean>(false);
   const latestKalmanCmpRef = useRef<Partial<KalmanComparisonData> | null>(null);
+  const [lastSensorGlitch, setLastSensorGlitch] = useState<{ id: number; phase: "auth" | "training" } | null>(null);
 
   const currentSessionWaveform = useRef<Array<{
     t: number;
@@ -632,6 +634,20 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       } else if (text.startsWith("TRAIN_FAILED")) {
         setBleData(prev => ({ ...prev, authStatus: "failed" }));
         addLog({ type: "reg", status: "Failed", message: "Pendaftaran Gagal: Memori Flash RP2040 penuh atau gagal menyimpan profil" });
+      } else if (text.startsWith("SENSOR_GLITCH")) {
+        const phase: "auth" | "training" = text.includes("TRAINING") ? "training" : "auth";
+        sessionLogged.current = true;
+        activeSessionInfo.current = { mode: null, slot: 0, name: "" };
+        lastProgress.current = 0;
+        setBleData(defaultBLEData);
+        addLog({
+          type: "system",
+          status: "Warning",
+          message: phase === "training"
+            ? "Gangguan sensor IMU saat registrasi — sesi dibatalkan otomatis"
+            : "Gangguan sensor IMU saat autentikasi — sesi dibatalkan otomatis",
+        });
+        setLastSensorGlitch({ id: Date.now(), phase });
       } else if (text.startsWith("DEL_SUCCESS")) {
         const parts = text.split(":");
         const slot = parts.length > 1 ? parseInt(parts[1], 10) : 0;
@@ -1411,6 +1427,7 @@ export function BLEProvider({ children }: { children: ReactNode }) {
       flashSyncVersion,
       kalmanTestMode,
       setKalmanTestMode,
+      lastSensorGlitch,
     }}>
       {children}
     </BLEContext.Provider>
